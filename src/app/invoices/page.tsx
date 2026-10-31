@@ -9,6 +9,9 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/toast";
+import { PageHeader } from "@/components/layout/page-header";
+import { KpiStatCard } from "@/components/ui/kpi-stat-card";
+import { formatCurrency } from "@/lib/utils";
 import { listInvoicesAction, generateInvoiceFromSubscriptionAction } from "@/modules/invoices/actions";
 import { InvoiceWithDetails, InvoiceStatus } from "@/modules/invoices/types";
 import {
@@ -134,76 +137,62 @@ export default function InvoicesPage() {
     }
   };
 
+  const collectionRate =
+    metrics.totalInvoiced > 0
+      ? Math.round((metrics.totalCollected / metrics.totalInvoiced) * 100)
+      : 0;
+  const outstandingPct =
+    metrics.totalInvoiced > 0
+      ? Math.round((metrics.totalOutstanding / metrics.totalInvoiced) * 100)
+      : 0;
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Invoices & Billing Statements</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Track billing cycles, inspect generated invoices, process payments, and export PDF statements.
-          </p>
-        </div>
-        <Button onClick={() => setIsGenerateModalOpen(true)} className="gap-2">
-          <Plus className="h-4 w-4" /> Bill Subscription
-        </Button>
-      </div>
-        {/* KPI Financial Cards */}
+    <div className="space-y-8">
+      <PageHeader
+        title="Invoices & statements"
+        description="Track billing cycles, payments, and export PDF statements."
+        icon={Receipt}
+        actions={
+          <Button onClick={() => setIsGenerateModalOpen(true)} className="gap-2" size="sm">
+            <Plus className="h-4 w-4" aria-hidden /> Bill subscription
+          </Button>
+        }
+      />
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card className="border-slate-200 shadow-xs">
-            <CardContent className="p-5 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Total Invoiced</p>
-                <p className="text-2xl font-bold text-slate-900 mt-1">${metrics.totalInvoiced.toFixed(2)}</p>
-                <p className="text-xs text-slate-400 mt-1">across {metrics.totalCount} invoices</p>
-              </div>
-              <div className="h-10 w-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
-                <Receipt className="h-5 w-5" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-slate-200 shadow-xs">
-            <CardContent className="p-5 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Cash Collected</p>
-                <p className="text-2xl font-bold text-emerald-600 mt-1">${metrics.totalCollected.toFixed(2)}</p>
-                <p className="text-xs text-emerald-600/80 mt-1">settled payments</p>
-              </div>
-              <div className="h-10 w-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                <DollarSign className="h-5 w-5" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-slate-200 shadow-xs">
-            <CardContent className="p-5 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Outstanding Balance</p>
-                <p className="text-2xl font-bold text-amber-600 mt-1">${metrics.totalOutstanding.toFixed(2)}</p>
-                <p className="text-xs text-amber-600/80 mt-1">accounts receivable</p>
-              </div>
-              <div className="h-10 w-10 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
-                <AlertCircle className="h-5 w-5" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-slate-200 shadow-xs">
-            <CardContent className="p-5 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Collection Rate</p>
-                <p className="text-2xl font-bold text-indigo-600 mt-1">
-                  {metrics.totalInvoiced > 0
-                    ? `${((metrics.totalCollected / metrics.totalInvoiced) * 100).toFixed(1)}%`
-                    : "100%"}
-                </p>
-                <p className="text-xs text-slate-400 mt-1">settlement efficiency</p>
-              </div>
-              <div className="h-10 w-10 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                <CreditCard className="h-5 w-5" />
-              </div>
-            </CardContent>
-          </Card>
+          <KpiStatCard
+            title="Total invoiced"
+            value={formatCurrency(metrics.totalInvoiced)}
+            subtitle={`${metrics.totalCount} invoices`}
+            icon={Receipt}
+            accent="blue"
+          />
+          <KpiStatCard
+            title="Cash collected"
+            value={formatCurrency(metrics.totalCollected)}
+            subtitle={`${collectionRate}% collection rate`}
+            icon={DollarSign}
+            accent="emerald"
+            trend={{ value: collectionRate, label: "collected", direction: collectionRate >= 80 ? "up" : "neutral" }}
+            delay={0.05}
+          />
+          <KpiStatCard
+            title="Outstanding"
+            value={formatCurrency(metrics.totalOutstanding)}
+            subtitle="Accounts receivable"
+            icon={AlertCircle}
+            accent="amber"
+            trend={{ value: outstandingPct, label: "of invoiced", direction: metrics.totalOutstanding > 0 ? "down" : "up" }}
+            delay={0.1}
+          />
+          <KpiStatCard
+            title="Open invoices"
+            value={invoices.filter((i) => i.status === "issued" || i.status === "partially_paid").length}
+            subtitle="Issued or partially paid"
+            icon={CreditCard}
+            accent="violet"
+            delay={0.15}
+          />
         </div>
 
         {/* Filters */}

@@ -44,6 +44,9 @@ import {
 } from "@/modules/products/actions";
 import { Product, ProductStatus } from "@/modules/products/types";
 import { formatDate, getStatusBadgeVariant } from "@/lib/utils";
+import { PageHeader } from "@/components/layout/page-header";
+import { KpiStatCard } from "@/components/ui/kpi-stat-card";
+import { Layers, Archive } from "lucide-react";
 
 interface ProductsClientProps {
   initialData: PaginatedResult<Product>;
@@ -77,6 +80,10 @@ export function ProductsClient({ initialData }: ProductsClientProps) {
     code: "",
     description: "",
     status: "active" as ProductStatus,
+    product_type: "",
+    sales_price: "",
+    cost_price: "",
+    pricing_currency: "USD",
   });
   const [fieldErrors, setFieldErrors] = React.useState<
     Record<string, string[]>
@@ -109,17 +116,40 @@ export function ProductsClient({ initialData }: ProductsClientProps) {
   }, [search, statusFilter, fetchProducts]);
 
   const resetForm = () => {
-    setForm({ name: "", code: "", description: "", status: "active" });
+    setForm({
+      name: "",
+      code: "",
+      description: "",
+      status: "active",
+      product_type: "",
+      sales_price: "",
+      cost_price: "",
+      pricing_currency: "USD",
+    });
     setFieldErrors({});
   };
 
   const openEdit = (product: Product) => {
     setEditProduct(product);
+    const meta = (product.metadata ?? {}) as Record<string, unknown>;
     setForm({
       name: product.name,
       code: product.code,
       description: product.description ?? "",
       status: product.status,
+      product_type: typeof meta.product_type === "string" ? meta.product_type : "",
+      sales_price:
+        meta.sales_price !== undefined && meta.sales_price !== null
+          ? String(meta.sales_price)
+          : "",
+      cost_price:
+        meta.cost_price !== undefined && meta.cost_price !== null
+          ? String(meta.cost_price)
+          : "",
+      pricing_currency:
+        typeof meta.currency === "string" && meta.currency.length === 3
+          ? meta.currency
+          : "USD",
     });
     setFieldErrors({});
   };
@@ -128,10 +158,19 @@ export function ProductsClient({ initialData }: ProductsClientProps) {
     setSubmitting(true);
     setFieldErrors({});
 
+    const metadata = {
+      ...(form.product_type ? { product_type: form.product_type } : {}),
+      ...(form.sales_price !== "" ? { sales_price: Number(form.sales_price) } : {}),
+      ...(form.cost_price !== "" ? { cost_price: Number(form.cost_price) } : {}),
+      currency: form.pricing_currency.toUpperCase(),
+    };
+
     const payload = {
-      ...form,
+      name: form.name,
       code: form.code.toUpperCase(),
       description: form.description || undefined,
+      status: form.status,
+      metadata,
     };
 
     const result = editProduct
@@ -139,7 +178,6 @@ export function ProductsClient({ initialData }: ProductsClientProps) {
       : await createProductAction({
           ...payload,
           is_active: true,
-          metadata: {},
         });
 
     setSubmitting(false);
@@ -174,20 +212,18 @@ export function ProductsClient({ initialData }: ProductsClientProps) {
 
   const totalPages = Math.ceil(data.total / data.limit);
 
-  return (
-    <div className="space-y-6">
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-            <Package className="h-6 w-6 text-blue-600" />
-            Products & Plans
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Manage your product catalog, variants, and subscription plans.
-          </p>
-        </div>
+  const activeOnPage = data.items.filter((p) => p.status === "active").length;
+  const activePct = data.items.length
+    ? Math.round((activeOnPage / data.items.length) * 100)
+    : 0;
 
+  return (
+    <div className="space-y-8">
+      <PageHeader
+        title="Products & plans"
+        description="Manage your product catalog, variants, and subscription plans."
+        icon={Package}
+        actions={
         <Dialog
           open={createOpen}
           onOpenChange={(open) => {
@@ -222,6 +258,34 @@ export function ProductsClient({ initialData }: ProductsClientProps) {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        }
+      />
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <KpiStatCard
+          title="Catalog size"
+          value={data.total}
+          subtitle="Products in catalog"
+          icon={Layers}
+          accent="violet"
+        />
+        <KpiStatCard
+          title="Active SKUs"
+          value={activeOnPage}
+          subtitle={`${data.items.length} on this page`}
+          icon={Package}
+          accent="blue"
+          trend={{ value: activePct, label: "active share", direction: activePct >= 75 ? "up" : "neutral" }}
+          delay={0.05}
+        />
+        <KpiStatCard
+          title="Draft / archived"
+          value={data.items.filter((p) => p.status !== "active").length}
+          subtitle="Non-active on current view"
+          icon={Archive}
+          accent="slate"
+          delay={0.1}
+        />
       </div>
 
       {/* Filters */}
@@ -429,14 +493,13 @@ interface ProductFormProps {
     code: string;
     description: string;
     status: ProductStatus;
+    product_type: string;
+    sales_price: string;
+    cost_price: string;
+    pricing_currency: string;
   };
   setForm: React.Dispatch<
-    React.SetStateAction<{
-      name: string;
-      code: string;
-      description: string;
-      status: ProductStatus;
-    }>
+    React.SetStateAction<ProductFormProps["form"]>
   >;
   fieldErrors: Record<string, string[]>;
 }
@@ -480,6 +543,40 @@ function ProductForm({ form, setForm, fieldErrors }: ProductFormProps) {
             { value: "draft", label: "Draft" },
             { value: "archived", label: "Archived" },
           ]}
+        />
+        <Input
+          id="product-type"
+          label="Product type"
+          value={form.product_type}
+          onChange={(e) => setForm((f) => ({ ...f, product_type: e.target.value }))}
+          placeholder="saas, service, license…"
+        />
+        <Input
+          id="product-sales-price"
+          label="Sales price"
+          type="number"
+          min={0}
+          step="0.01"
+          value={form.sales_price}
+          onChange={(e) => setForm((f) => ({ ...f, sales_price: e.target.value }))}
+        />
+        <Input
+          id="product-cost-price"
+          label="Cost price"
+          type="number"
+          min={0}
+          step="0.01"
+          value={form.cost_price}
+          onChange={(e) => setForm((f) => ({ ...f, cost_price: e.target.value }))}
+        />
+        <Input
+          id="product-pricing-currency"
+          label="Pricing currency"
+          value={form.pricing_currency}
+          onChange={(e) =>
+            setForm((f) => ({ ...f, pricing_currency: e.target.value.toUpperCase() }))
+          }
+          maxLength={3}
         />
       </div>
       <Textarea

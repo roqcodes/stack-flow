@@ -6,8 +6,10 @@ import { SubscriptionStats, SubscriptionWithDetails } from "@/modules/subscripti
 import { SubscriptionStatsCards } from "@/modules/subscriptions/components/subscription-stats-cards";
 import { SubscriptionTable } from "@/modules/subscriptions/components/subscription-table";
 import { CreateSubscriptionModal } from "@/modules/subscriptions/components/create-subscription-modal";
+import { PageHeader } from "@/components/layout/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
+import { Repeat } from "lucide-react";
 
 function SubscriptionsSkeleton() {
   return (
@@ -76,18 +78,12 @@ function SubscriptionsContent() {
   }, [refreshKey, toastError]);
 
   return (
-    <div className="space-y-6">
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-5">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            Subscriptions
-          </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Manage customer recurring subscription lifecycles, billing intervals, and billing engine execution status.
-          </p>
-        </div>
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        title="Subscriptions"
+        description="Recurring lifecycles, billing intervals, and engine execution status."
+        icon={Repeat}
+      />
 
       {loading ? (
         <SubscriptionsSkeleton />

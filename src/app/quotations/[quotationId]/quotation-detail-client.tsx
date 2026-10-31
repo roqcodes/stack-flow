@@ -114,6 +114,14 @@ export function QuotationDetailClient({ quotation: initial }: QuotationDetailCli
             Valid until {formatDate(quotation.valid_until)} · Created{" "}
             {formatDate(quotation.created_at)}
           </p>
+          {quotation.converted_subscription_id ? (
+            <Link
+              href={`/subscriptions/${quotation.converted_subscription_id}`}
+              className="inline-block text-sm text-blue-600 hover:underline mt-2"
+            >
+              View linked subscription →
+            </Link>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           <Badge variant={getStatusBadgeVariant(quotation.status)} className="h-8 px-3">

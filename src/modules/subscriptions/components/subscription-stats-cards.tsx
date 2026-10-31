@@ -1,5 +1,6 @@
+"use client";
+
 import * as React from "react";
-import { Card, CardContent } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/utils";
 import { SubscriptionStats } from "../types";
 import {
@@ -8,6 +9,7 @@ import {
   PauseCircle,
   TrendingUp,
 } from "lucide-react";
+import { KpiStatCard } from "@/components/ui/kpi-stat-card";
 
 interface SubscriptionStatsCardsProps {
   stats: SubscriptionStats;
@@ -18,108 +20,83 @@ export function SubscriptionStatsCards({
   stats,
   onFilterDue,
 }: SubscriptionStatsCardsProps) {
+  const total = stats.totalSubscriptions || 0;
+  const activePct = total ? Math.round((stats.activeCount / total) * 100) : 0;
+  const duePct = total ? Math.round((stats.dueForBillingCount / total) * 100) : 0;
+  const pausedPct = total ? Math.round((stats.pausedCount / total) * 100) : 0;
+
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      {/* Metric 1: Active Subscriptions */}
-      <Card className="border-slate-200 shadow-2xs">
-        <CardContent className="p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">
-                Active Subscriptions
-              </p>
-              <h3 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">
-                {stats.activeCount}
-              </h3>
-              <p className="mt-1 text-xs text-slate-500">
-                {stats.trialingCount > 0 ? `+${stats.trialingCount} in active trial` : "Healthy standing"}
-              </p>
-            </div>
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-              <Repeat className="h-5 w-5" />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <KpiStatCard
+        title="Active subscriptions"
+        value={stats.activeCount}
+        subtitle={
+          stats.trialingCount > 0
+            ? `${stats.trialingCount} in trial · ${total} total`
+            : `${total} subscriptions on file`
+        }
+        icon={Repeat}
+        accent="blue"
+        trend={{ value: activePct, label: "of portfolio", direction: activePct >= 60 ? "up" : "neutral" }}
+        delay={0}
+      />
 
-      {/* Metric 2: Due for Billing */}
-      <Card
-        className={`border-slate-200 shadow-2xs transition-colors ${
-          stats.dueForBillingCount > 0
-            ? "border-amber-200 bg-amber-50/20 cursor-pointer hover:bg-amber-50/40"
-            : ""
-        }`}
-        onClick={onFilterDue}
-      >
-        <CardContent className="p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">
-                Due for Billing
-              </p>
-              <h3 className="mt-2 text-2xl font-bold tracking-tight text-amber-900">
-                {stats.dueForBillingCount}
-              </h3>
-              <p className="mt-1 text-xs text-amber-700 font-medium">
-                {stats.dueForBillingCount > 0
-                  ? "Cycle ready for billing engine"
-                  : "All cycles up to date"}
-              </p>
-            </div>
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-              <AlertCircle className="h-5 w-5" />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {stats.dueForBillingCount > 0 && onFilterDue ? (
+        <button
+          type="button"
+          onClick={onFilterDue}
+          className="text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 rounded-2xl"
+        >
+          <KpiStatCard
+            title="Due for billing"
+            value={stats.dueForBillingCount}
+            subtitle="Cycles ready for the billing engine"
+            icon={AlertCircle}
+            accent="amber"
+            trend={{ value: duePct, label: "of subs", direction: "down" }}
+            delay={0.05}
+            className="border-amber-200/80 hover:border-amber-300/90"
+          />
+        </button>
+      ) : (
+        <KpiStatCard
+          title="Due for billing"
+          value={stats.dueForBillingCount}
+          subtitle="All billing cycles up to date"
+          icon={AlertCircle}
+          accent="amber"
+          trend={{ value: duePct, label: "of subs", direction: "up" }}
+          delay={0.05}
+        />
+      )}
 
-      {/* Metric 3: Paused Subscriptions */}
-      <Card className="border-slate-200 shadow-2xs">
-        <CardContent className="p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">
-                Paused Subscriptions
-              </p>
-              <h3 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">
-                {stats.pausedCount}
-              </h3>
-              <p className="mt-1 text-xs text-slate-500">
-                {stats.pastDueCount > 0
-                  ? `${stats.pastDueCount} past due`
-                  : "Temporary customer holds"}
-              </p>
-            </div>
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
-              <PauseCircle className="h-5 w-5" />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <KpiStatCard
+        title="Paused"
+        value={stats.pausedCount}
+        subtitle={
+          stats.pastDueCount > 0
+            ? `${stats.pastDueCount} past due accounts`
+            : "Temporary customer holds"
+        }
+        icon={PauseCircle}
+        accent="slate"
+        trend={{ value: pausedPct, label: "paused share", direction: "neutral" }}
+        delay={0.1}
+      />
 
-      {/* Metric 4: MRR Contribution */}
-      <Card className="border-slate-200 shadow-2xs">
-        <CardContent className="p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">
-                Contract MRR
-              </p>
-              <h3 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">
-                {formatCurrency(stats.monthlyRecurringRevenue)}
-              </h3>
-              <p className="mt-1 text-xs text-emerald-600 font-medium flex items-center gap-1">
-                <TrendingUp className="h-3 w-3" />
-                Normalized recurring run-rate
-              </p>
-            </div>
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
-              <TrendingUp className="h-5 w-5" />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <KpiStatCard
+        title="Contract MRR"
+        value={formatCurrency(stats.monthlyRecurringRevenue)}
+        subtitle="Normalized recurring run-rate"
+        icon={TrendingUp}
+        accent="emerald"
+        trend={{
+          value: activePct,
+          label: "active base",
+          direction: stats.monthlyRecurringRevenue > 0 ? "up" : "neutral",
+        }}
+        delay={0.15}
+      />
     </div>
   );
 }
-

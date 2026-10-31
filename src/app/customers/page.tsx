@@ -1,5 +1,6 @@
 import { Metadata } from "next";
 import { requirePermission } from "@/modules/auth/auth-utils";
+import { ensureRequestScope } from "@/lib/request-scope";
 import { listCustomersAction } from "@/modules/customers/actions";
 import { CustomersClient } from "./customers-client";
 
@@ -11,6 +12,7 @@ export const metadata: Metadata = {
 };
 
 export default async function CustomersPage() {
+  await ensureRequestScope();
   await requirePermission("customers:view");
 
   const result = await listCustomersAction({ page: 1, limit: 20 });
