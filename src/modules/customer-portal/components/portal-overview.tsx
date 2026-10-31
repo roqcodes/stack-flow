@@ -23,16 +23,19 @@ import {
 
 interface PortalOverviewProps {
   data: CustomerPortalData;
+  onSelectSubscription?: (subId: string) => void;
 }
 
-export function PortalOverview({ data }: PortalOverviewProps) {
+export function PortalOverview({ data, onSelectSubscription }: PortalOverviewProps) {
   const {
     customer,
     activeSubscription,
+    allSubscriptions,
     subscriptionHistory,
     invoices,
     payments,
     availablePlans,
+    planPermissions,
   } = data;
 
   const planChangeHistory = (activeSubscription?.metadata?.plan_change_history as PlanChangeRequest[]) || [];
@@ -74,6 +77,9 @@ export function PortalOverview({ data }: PortalOverviewProps) {
       <PortalSubscriptionCard
         subscription={activeSubscription}
         availablePlans={availablePlans}
+        planPermissions={planPermissions}
+        allSubscriptions={allSubscriptions}
+        onSelectSubscription={onSelectSubscription}
       />
 
       {/* Primary Financial Ledger: Invoices & Payment Transactions */}

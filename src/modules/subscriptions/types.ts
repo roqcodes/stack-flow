@@ -237,6 +237,8 @@ export interface PlanPermissions {
   seatLimit: number | null; // null represents unlimited
   allowPause: boolean;
   maxPauseDays: number | null;
+  allowImmediateCancellation?: boolean;
+  minCommitmentDays?: number | null;
   requiresApproval: boolean;
   rules: PlanRule[];
   customRules: Record<string, string>;

@@ -43,6 +43,7 @@ export const createSubscriptionFromQuotationSchema = z.object({
     .optional(),
   overrideCycle: billingCycleSchema.optional(),
   notes: z.string().max(1000).optional(),
+  allowExpiredQuotation: z.boolean().optional(),
 });
 
 export type CreateSubscriptionFromQuotationInput = z.infer<

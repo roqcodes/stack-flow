@@ -12,6 +12,8 @@ export function parsePlanRules(
   let seatLimit: number | null = null;
   let allowPause = true;
   let maxPauseDays: number | null = null;
+  let allowImmediateCancellation = true;
+  let minCommitmentDays: number | null = null;
   let requiresApproval = false;
   const customRules: Record<string, string> = {};
 
@@ -33,6 +35,19 @@ export function parsePlanRules(
       if (!Number.isNaN(parsed) && parsed > 0) {
         maxPauseDays = parsed;
       }
+    } else if (
+      type === "allow_immediate_cancellation" ||
+      type === "allow_early_cancellation" ||
+      type === "can_cancel_early"
+    ) {
+      if (val.toLowerCase() === "false" || val === "0" || val.toLowerCase() === "disabled") {
+        allowImmediateCancellation = false;
+      }
+    } else if (type === "min_commitment_days" || type === "min_term_days") {
+      const parsed = parseInt(val, 10);
+      if (!Number.isNaN(parsed) && parsed > 0) {
+        minCommitmentDays = parsed;
+      }
     } else if (type === "requires_approval") {
       if (val.toLowerCase() === "true" || val === "1") {
         requiresApproval = true;
@@ -48,6 +63,8 @@ export function parsePlanRules(
     seatLimit,
     allowPause,
     maxPauseDays,
+    allowImmediateCancellation,
+    minCommitmentDays,
     requiresApproval,
     rules,
     customRules,
@@ -165,6 +182,16 @@ export async function validatePlanTransition(params: {
       return {
         allowed: false,
         error: `Cannot transition subscription: quantity (${quantity}) exceeds plan '${permissions.planName || planId}' seat limit (${permissions.seatLimit}).`,
+      };
+    }
+  }
+
+  // Check 3: Immediate closure permission
+  if (targetStatus === "closed") {
+    if (permissions.allowImmediateCancellation === false) {
+      return {
+        allowed: false,
+        error: `Subscriptions on plan '${permissions.planName || planId}' do not permit immediate early closure by plan policy. Please request cancellation at the end of the current billing period.`,
       };
     }
   }

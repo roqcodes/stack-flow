@@ -42,6 +42,7 @@ import {
 } from "./date-utils";
 import {
   assertLifecycleTransition,
+  assertTransition,
   resolveLifecycleStatus,
   mapLifecycleToDbStatus,
 } from "./state-machine";
@@ -113,6 +114,18 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
         return apiError(
           ERROR_CODES.VALIDATION_ERROR,
           `Cannot convert quotation ${quotation.quotation_number}: status is '${quotation.status}', must be 'accepted'.`
+        );
+      }
+
+      // Check quotation validity period unless explicitly overridden
+      if (
+        quotation.valid_until &&
+        new Date(quotation.valid_until).getTime() < Date.now() &&
+        !options?.allowExpiredQuotation
+      ) {
+        return apiError(
+          ERROR_CODES.VALIDATION_ERROR,
+          `Cannot convert quotation ${quotation.quotation_number}: quotation expired on ${quotation.valid_until}. Set allowExpiredQuotation to true to override.`
         );
       }
 
@@ -543,6 +556,10 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
         const cust = r.customers as unknown as SubscriptionCustomer;
         const pl = r.plans as unknown as SubscriptionPlan;
         const subItems = itemsBySub.get(r.id) || [];
+        // Filter out items that match the base plan to avoid duplicate line billing
+        const addOnItems = subItems.filter(
+          (item) => !item.plan_id || item.plan_id !== pl.id
+        );
 
         const lines: SubscriptionBillingLine[] = [
           // Primary plan line
@@ -561,7 +578,7 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
             is_recurring: true,
           },
           // Add-on lines
-          ...subItems.map((item) => ({
+          ...addOnItems.map((item) => ({
             id: item.id,
             subscription_id: r.id,
             product_id: item.product_id,
@@ -745,6 +762,10 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
 
       if (addOns && addOns.length > 0) {
         for (const item of addOns) {
+          // Skip item if it represents the base plan itself to prevent duplicate billing
+          if (item.plan_id && item.plan_id === sub.plan_id) {
+            continue;
+          }
           lines.push({
             id: item.id,
             subscription_id: sub.id,
@@ -1127,9 +1148,17 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
         });
       }
 
+      // Prevent duplicate scheduled cancellation requests
+      const existingMeta = (sub.metadata as Record<string, unknown>) || {};
+      if (!immediately && existingMeta.cancel_at_period_end === true) {
+        return apiError(
+          ERROR_CODES.CONFLICT,
+          "A cancellation request is already scheduled for this subscription at the end of the current billing period."
+        );
+      }
+
       // Schedule at current_period_end
       const nowIso = new Date().toISOString();
-      const existingMeta = (sub.metadata as Record<string, unknown>) || {};
       const requestsHistory =
         (existingMeta.cancellation_requests as CancellationRequest[]) || [];
 
@@ -1162,13 +1191,21 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
           updated_at: nowIso,
         })
         .eq("id", subscriptionId)
+        .eq("status", sub.status) // CAS concurrency check
         .select()
-        .single();
+        .maybeSingle();
 
-      if (error || !updated) {
+      if (error) {
         return apiError(
           ERROR_CODES.DATABASE_ERROR,
-          error?.message || "Failed to schedule cancellation."
+          error.message || "Failed to schedule cancellation."
+        );
+      }
+
+      if (!updated) {
+        return apiError(
+          ERROR_CODES.CONFLICT,
+          "Concurrent modification detected: subscription status changed concurrently. Please refresh."
         );
       }
 
@@ -1238,13 +1275,21 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
           updated_at: nowIso,
         })
         .eq("id", subscriptionId)
+        .eq("status", sub.status) // CAS concurrency check
         .select()
-        .single();
+        .maybeSingle();
 
-      if (error || !updated) {
+      if (error) {
         return apiError(
           ERROR_CODES.DATABASE_ERROR,
-          error?.message || "Failed to revoke scheduled cancellation."
+          error.message || "Failed to revoke scheduled cancellation."
+        );
+      }
+
+      if (!updated) {
+        return apiError(
+          ERROR_CODES.CONFLICT,
+          "Concurrent update detected: subscription was updated by another process. Please refresh."
         );
       }
 
@@ -1527,7 +1572,7 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
         delete updatedMeta.pending_plan_change;
 
         const cycle = targetCycle || (targetPlan.billing_cycle as BillingCycle);
-        const { error: updateErr } = await supabase
+        const { data: updatedSub, error: updateErr } = await supabase
           .from("subscriptions")
           .update({
             plan_id: targetPlanId,
@@ -1539,10 +1584,20 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
             metadata: updatedMeta,
             updated_at: nowIso,
           })
-          .eq("id", subscriptionId);
+          .eq("id", subscriptionId)
+          .eq("plan_id", sub.plan_id) // CAS: ensures plan hasn't changed concurrently
+          .select()
+          .maybeSingle();
 
         if (updateErr) {
           return apiError(ERROR_CODES.DATABASE_ERROR, updateErr.message);
+        }
+
+        if (!updatedSub) {
+          return apiError(
+            ERROR_CODES.CONFLICT,
+            "Concurrent modification detected: subscription plan was modified by another operation. Please refresh."
+          );
         }
 
         // Update primary subscription item
@@ -1588,13 +1643,27 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
         };
         delete updatedMeta.pending_plan_change;
 
-        await supabase
+        const { data: updatedSub, error: updateErr } = await supabase
           .from("subscriptions")
           .update({
             metadata: updatedMeta,
             updated_at: nowIso,
           })
-          .eq("id", subscriptionId);
+          .eq("id", subscriptionId)
+          .eq("status", sub.status) // CAS: ensures status hasn't changed concurrently
+          .select()
+          .maybeSingle();
+
+        if (updateErr) {
+          return apiError(ERROR_CODES.DATABASE_ERROR, updateErr.message);
+        }
+
+        if (!updatedSub) {
+          return apiError(
+            ERROR_CODES.CONFLICT,
+            "Concurrent modification detected: subscription was modified by another operation. Please refresh."
+          );
+        }
 
         return await this.getSubscriptionById(subscriptionId);
       }
@@ -1648,16 +1717,26 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
       delete updatedMeta.scheduled_plan_change;
       delete updatedMeta.pending_plan_change;
 
-      const { error: updateErr } = await supabase
+      const { data: updatedSub, error: updateErr } = await supabase
         .from("subscriptions")
         .update({
           metadata: updatedMeta,
           updated_at: nowIso,
         })
-        .eq("id", subscriptionId);
+        .eq("id", subscriptionId)
+        .eq("status", sub.status) // CAS concurrency check
+        .select()
+        .maybeSingle();
 
       if (updateErr) {
         return apiError(ERROR_CODES.DATABASE_ERROR, updateErr.message);
+      }
+
+      if (!updatedSub) {
+        return apiError(
+          ERROR_CODES.CONFLICT,
+          "Concurrent modification detected: subscription was modified by another operation. Please refresh."
+        );
       }
 
       return await this.getSubscriptionById(subscriptionId);
@@ -1781,6 +1860,18 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
             ...sub,
             lifecycle_status: resolveLifecycleStatus(sub.status, sub.metadata),
           } as Subscription);
+        }
+      }
+
+      // Step 3b: Rapid double-submission cooldown guard (for invocations without idempotency keys)
+      if (existingMeta.last_renewed_at && !options?.idempotencyKey && !options?.invoiceId) {
+        const lastRenewedMs = new Date(existingMeta.last_renewed_at as string).getTime();
+        const secondsSinceLastRenew = (Date.now() - lastRenewedMs) / 1000;
+        if (secondsSinceLastRenew < 5) {
+          return apiError(
+            ERROR_CODES.CONFLICT,
+            "A renewal was already processed moments ago. Duplicate renewal prevented."
+          );
         }
       }
 
@@ -1997,8 +2088,10 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
         return apiSuccess(currentSub);
       }
 
-      // Step 2: Enforce Finite State Machine transitions
+      // Step 2: Enforce Finite State Machine transitions (domain lifecycle & DB enum)
       assertLifecycleTransition(currentLifecycle, targetStatus);
+      const targetDbStatus = mapLifecycleToDbStatus(targetStatus);
+      assertTransition(currentSub.status, targetDbStatus);
 
       // Step 3: Enforce Plan-Specific Permissions (plan_rules table)
       const planValidation = await validatePlanTransition({
@@ -2131,13 +2224,21 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
         .from("subscriptions")
         .update(updatePayload)
         .eq("id", subscriptionId)
+        .eq("status", currentSub.status) // CAS concurrency check
         .select()
-        .single();
+        .maybeSingle();
 
-      if (updateErr || !updated) {
+      if (updateErr) {
         return apiError(
           ERROR_CODES.DATABASE_ERROR,
-          updateErr?.message || `Failed to transition subscription to ${targetStatus}`
+          updateErr.message || `Failed to transition subscription to ${targetStatus}`
+        );
+      }
+
+      if (!updated) {
+        return apiError(
+          ERROR_CODES.CONFLICT,
+          `Concurrent modification detected: subscription status was modified by another operation. Permitted transitions may have changed. Please refresh.`
         );
       }
 

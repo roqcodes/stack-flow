@@ -14,19 +14,80 @@ import {
   SubscriptionWithDetails,
   Subscription,
   SubscriptionPlan,
+  PlanPermissions,
 } from "@/modules/subscriptions/types";
 import { resolveLifecycleStatus } from "@/modules/subscriptions/state-machine";
+import { getPlanPermissions } from "@/modules/subscriptions/plan-permissions";
 
 /**
- * Loads comprehensive customer portal data for the authenticated session
+ * Server-side authorization guard: Verifies that the authenticated user owns the target subscription.
+ * Admins and staff have elevated cross-tenant permissions; customer roles are strictly checked.
+ */
+async function verifyCustomerSubscriptionOwnership(subscriptionId: string) {
+  const user = await requireAuth();
+  const profile = await getCurrentProfile();
+
+  if (profile?.role === "admin" || profile?.role === "staff") {
+    return { allowed: true as const, user, profile };
+  }
+
+  const supabase = await createClient();
+  const { data: customer } = await supabase
+    .from("customers")
+    .select("id")
+    .or(`profile_id.eq.${user.id},email.eq.${user.email}`)
+    .maybeSingle();
+
+  if (!customer) {
+    return {
+      allowed: false as const,
+      user,
+      profile,
+      error: "No customer organization profile associated with your account.",
+    };
+  }
+
+  const { data: sub } = await supabase
+    .from("subscriptions")
+    .select("id, customer_id")
+    .eq("id", subscriptionId)
+    .maybeSingle();
+
+  if (!sub || sub.customer_id !== customer.id) {
+    return {
+      allowed: false as const,
+      user,
+      profile,
+      error: "Access denied: you do not have permission to view or manage this subscription.",
+    };
+  }
+
+  return { allowed: true as const, user, profile, customerId: customer.id };
+}
+
+/**
+ * Loads comprehensive customer portal data for the authenticated session.
+ * Supports switching between subscriptions if the customer has multiple active services.
  */
 export async function getCustomerPortalDataAction(
-  targetCustomerId?: string
+  optionsOrCustomerId?:
+    | { targetCustomerId?: string; selectedSubscriptionId?: string }
+    | string
 ): Promise<ApiResponse<CustomerPortalData>> {
   try {
     const user = await requireAuth();
     const profile = await getCurrentProfile();
     const supabase = await createClient();
+
+    let targetCustomerId: string | undefined;
+    let selectedSubId: string | undefined;
+
+    if (typeof optionsOrCustomerId === "string") {
+      targetCustomerId = optionsOrCustomerId;
+    } else if (optionsOrCustomerId) {
+      targetCustomerId = optionsOrCustomerId.targetCustomerId;
+      selectedSubId = optionsOrCustomerId.selectedSubscriptionId;
+    }
 
     let customerId: string | null = null;
 
@@ -43,7 +104,7 @@ export async function getCustomerPortalDataAction(
         customerId = firstCust?.id || null;
       }
     } else {
-      // Customer role strictly resolved from auth profile
+      // Customer role strictly resolved from auth profile (no cross-tenant access)
       const { data: cust } = await supabase
         .from("customers")
         .select("id")
@@ -77,21 +138,39 @@ export async function getCustomerPortalDataAction(
       .eq("customer_id", customerId)
       .order("created_at", { ascending: false });
 
+    const allSubs = subs || [];
+    const allSubscriptionsMapped: Subscription[] = allSubs.map((s) => ({
+      ...s,
+      lifecycle_status: resolveLifecycleStatus(s.status, s.metadata),
+    } as unknown as Subscription));
+
     let activeSubWithDetails: SubscriptionWithDetails | null = null;
+    let planPermissions: PlanPermissions | null = null;
     const historySubs: Subscription[] = [];
 
-    const activeSub = (subs || []).find(
-      (s) => s.status === "active" || s.status === "trialing" || s.status === "paused"
-    );
+    // Select subscription to display
+    let activeSub: (typeof allSubs)[0] | undefined;
+    if (selectedSubId) {
+      activeSub = allSubs.find((s) => s.id === selectedSubId);
+    }
+    if (!activeSub) {
+      activeSub = allSubs.find(
+        (s) => s.status === "active" || s.status === "trialing" || s.status === "paused"
+      );
+    }
+    if (!activeSub && allSubs.length > 0) {
+      activeSub = allSubs[0];
+    }
 
     if (activeSub) {
       const detailRes = await subscriptionService.getSubscriptionById(activeSub.id);
       if (detailRes.success) {
         activeSubWithDetails = detailRes.data;
       }
+      planPermissions = await getPlanPermissions(activeSub.plan_id, supabase);
     }
 
-    (subs || []).forEach((s) => {
+    allSubs.forEach((s) => {
       if (!activeSub || s.id !== activeSub.id) {
         historySubs.push({
           ...s,
@@ -106,7 +185,7 @@ export async function getCustomerPortalDataAction(
       .select("id, invoice_number, status, total_amount, amount_paid, amount_due, currency, issue_date, due_date, paid_at")
       .eq("customer_id", customerId)
       .order("issue_date", { ascending: false })
-      .limit(20);
+      .limit(30);
 
     const invoiceSummaries: PortalInvoiceSummary[] = (invoices || []).map((inv) => ({
       id: inv.id,
@@ -145,7 +224,7 @@ export async function getCustomerPortalDataAction(
       `)
       .eq("customer_id", customerId)
       .order("created_at", { ascending: false })
-      .limit(30);
+      .limit(40);
 
     const paymentSummaries: PortalPaymentSummary[] = (payments || []).map((pay) => {
       const allocations = (pay.payment_allocations as unknown as Array<{
@@ -196,10 +275,12 @@ export async function getCustomerPortalDataAction(
         status: customer.status,
       },
       activeSubscription: activeSubWithDetails,
+      allSubscriptions: allSubscriptionsMapped,
       subscriptionHistory: historySubs,
       invoices: invoiceSummaries,
       payments: paymentSummaries,
       availablePlans: (plans || []) as unknown as SubscriptionPlan[],
+      planPermissions,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to load portal data";
@@ -208,7 +289,9 @@ export async function getCustomerPortalDataAction(
 }
 
 /**
- * Customer Self-Service: Submit an upgrade / downgrade / seat change request
+ * Customer Self-Service: Submit an upgrade / downgrade / seat change request.
+ * Enforces server-side authorization: Customers can only modify their own subscription.
+ * Prices cannot be tampered with (looked up securely server-side from plans table).
  */
 export async function submitPortalPlanChangeAction(params: {
   subscriptionId: string;
@@ -217,8 +300,10 @@ export async function submitPortalPlanChangeAction(params: {
   immediately?: boolean;
   notes?: string;
 }): Promise<ApiResponse<SubscriptionWithDetails>> {
-  const user = await requireAuth();
-  const profile = await getCurrentProfile();
+  const auth = await verifyCustomerSubscriptionOwnership(params.subscriptionId);
+  if (!auth.allowed) {
+    return apiError(ERROR_CODES.FORBIDDEN, auth.error);
+  }
 
   const res = await subscriptionService.submitPlanChangeRequest({
     subscriptionId: params.subscriptionId,
@@ -226,8 +311,8 @@ export async function submitPortalPlanChangeAction(params: {
     targetQuantity: params.targetQuantity,
     immediately: params.immediately,
     notes: params.notes,
-    actorRole: profile?.role || "customer",
-    actorId: user.id,
+    actorRole: auth.profile?.role || "customer",
+    actorId: auth.user.id,
   });
 
   if (res.success) {
@@ -240,19 +325,22 @@ export async function submitPortalPlanChangeAction(params: {
 }
 
 /**
- * Customer Self-Service: Revoke a pending or scheduled plan change request
+ * Customer Self-Service: Revoke a pending or scheduled plan change request.
+ * Enforces server-side authorization.
  */
 export async function revokePortalPlanChangeAction(params: {
   subscriptionId: string;
   notes?: string;
 }): Promise<ApiResponse<SubscriptionWithDetails>> {
-  const user = await requireAuth();
-  const profile = await getCurrentProfile();
+  const auth = await verifyCustomerSubscriptionOwnership(params.subscriptionId);
+  if (!auth.allowed) {
+    return apiError(ERROR_CODES.FORBIDDEN, auth.error);
+  }
 
   const res = await subscriptionService.revokePlanChangeRequest(params.subscriptionId, {
     notes: params.notes || "Revoked by customer in portal",
-    actorRole: profile?.role || "customer",
-    actorId: user.id,
+    actorRole: auth.profile?.role || "customer",
+    actorId: auth.user.id,
   });
 
   if (res.success) {
@@ -265,7 +353,8 @@ export async function revokePortalPlanChangeAction(params: {
 }
 
 /**
- * Customer Self-Service: Submit a cancellation request (immediate or at period end)
+ * Customer Self-Service: Submit a cancellation request (immediate or at period end).
+ * Enforces server-side authorization.
  */
 export async function submitPortalCancellationAction(params: {
   subscriptionId: string;
@@ -273,16 +362,18 @@ export async function submitPortalCancellationAction(params: {
   reason: string;
   feedback?: string;
 }): Promise<ApiResponse<Subscription>> {
-  const user = await requireAuth();
-  const profile = await getCurrentProfile();
+  const auth = await verifyCustomerSubscriptionOwnership(params.subscriptionId);
+  if (!auth.allowed) {
+    return apiError(ERROR_CODES.FORBIDDEN, auth.error);
+  }
 
   const res = await subscriptionService.submitCancellationRequest({
     subscriptionId: params.subscriptionId,
     immediately: params.immediately,
     reason: params.reason,
     feedback: params.feedback,
-    actorRole: profile?.role || "customer",
-    actorId: user.id,
+    actorRole: auth.profile?.role || "customer",
+    actorId: auth.user.id,
   });
 
   if (res.success) {
@@ -295,19 +386,22 @@ export async function submitPortalCancellationAction(params: {
 }
 
 /**
- * Customer Self-Service: Revoke a scheduled period-end cancellation
+ * Customer Self-Service: Revoke a scheduled period-end cancellation.
+ * Enforces server-side authorization.
  */
 export async function revokePortalCancellationAction(params: {
   subscriptionId: string;
   notes?: string;
 }): Promise<ApiResponse<Subscription>> {
-  const user = await requireAuth();
-  const profile = await getCurrentProfile();
+  const auth = await verifyCustomerSubscriptionOwnership(params.subscriptionId);
+  if (!auth.allowed) {
+    return apiError(ERROR_CODES.FORBIDDEN, auth.error);
+  }
 
   const res = await subscriptionService.revokeCancellationRequest(params.subscriptionId, {
     notes: params.notes || "Revoked by customer in portal",
-    actorRole: profile?.role || "customer",
-    actorId: user.id,
+    actorRole: auth.profile?.role || "customer",
+    actorId: auth.user.id,
   });
 
   if (res.success) {
@@ -319,3 +413,60 @@ export async function revokePortalCancellationAction(params: {
   return res;
 }
 
+/**
+ * Customer Self-Service: Pause subscription where permitted by plan policy.
+ * Enforces server-side authorization & plan permissions (allow_pause, max_pause_days).
+ */
+export async function submitPortalPauseAction(params: {
+  subscriptionId: string;
+  reason?: string;
+  resumeScheduledAt?: string;
+}): Promise<ApiResponse<Subscription>> {
+  const auth = await verifyCustomerSubscriptionOwnership(params.subscriptionId);
+  if (!auth.allowed) {
+    return apiError(ERROR_CODES.FORBIDDEN, auth.error);
+  }
+
+  const res = await subscriptionService.pauseSubscription(params.subscriptionId, {
+    reason: params.reason || "Customer self-service pause",
+    resumeScheduledAt: params.resumeScheduledAt,
+    actorRole: auth.profile?.role || "customer",
+    actorId: auth.user.id,
+  });
+
+  if (res.success) {
+    revalidatePath("/portal");
+    revalidatePath("/subscriptions");
+    revalidatePath(`/subscriptions/${params.subscriptionId}`);
+  }
+
+  return res;
+}
+
+/**
+ * Customer Self-Service: Resume subscription from paused state.
+ * Enforces server-side authorization & billing date recalculation.
+ */
+export async function submitPortalResumeAction(params: {
+  subscriptionId: string;
+  resumeBillingNow?: boolean;
+}): Promise<ApiResponse<Subscription>> {
+  const auth = await verifyCustomerSubscriptionOwnership(params.subscriptionId);
+  if (!auth.allowed) {
+    return apiError(ERROR_CODES.FORBIDDEN, auth.error);
+  }
+
+  const res = await subscriptionService.resumeSubscription(params.subscriptionId, {
+    resumeBillingNow: params.resumeBillingNow ?? true,
+    actorRole: auth.profile?.role || "customer",
+    actorId: auth.user.id,
+  });
+
+  if (res.success) {
+    revalidatePath("/portal");
+    revalidatePath("/subscriptions");
+    revalidatePath(`/subscriptions/${params.subscriptionId}`);
+  }
+
+  return res;
+}

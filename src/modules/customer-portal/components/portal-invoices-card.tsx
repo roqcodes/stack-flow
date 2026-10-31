@@ -62,8 +62,15 @@ export function PortalInvoicesCard({ invoices }: PortalInvoicesCardProps) {
                   <TableCell className="text-xs text-slate-600">
                     {formatDate(inv.due_date)}
                   </TableCell>
-                  <TableCell className="text-right font-bold text-xs text-slate-900">
-                    {formatCurrency(inv.total_amount, inv.currency)}
+                  <TableCell className="text-right text-xs">
+                    <span className="font-bold text-slate-900 block">
+                      {formatCurrency(inv.total_amount, inv.currency)}
+                    </span>
+                    {inv.amount_due > 0 && inv.status !== "paid" && (
+                      <span className="text-[10px] text-amber-700 font-semibold block">
+                        Due: {formatCurrency(inv.amount_due, inv.currency)}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="text-center">
                     {inv.status === "paid" ? (

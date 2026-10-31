@@ -4,6 +4,8 @@ import {
   SubscriptionPlan,
   PlanChangeRequest,
   PlanChangeType,
+  PlanPermissions,
+  PreservedSubscriptionPeriod,
 } from "../subscriptions/types";
 
 export interface PortalInvoiceSummary {
@@ -52,11 +54,21 @@ export interface CustomerPortalData {
     status: string;
   };
   activeSubscription: SubscriptionWithDetails | null;
+  allSubscriptions: Subscription[];
   subscriptionHistory: Subscription[];
   invoices: PortalInvoiceSummary[];
   payments: PortalPaymentSummary[];
   availablePlans: SubscriptionPlan[];
+  planPermissions: PlanPermissions | null;
 }
 
-export type { PlanChangeRequest, PlanChangeType };
+export type {
+  SubscriptionWithDetails,
+  Subscription,
+  SubscriptionPlan,
+  PlanChangeRequest,
+  PlanChangeType,
+  PlanPermissions,
+  PreservedSubscriptionPeriod,
+};
 

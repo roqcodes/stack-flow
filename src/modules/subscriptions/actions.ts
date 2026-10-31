@@ -170,6 +170,7 @@ export async function createSubscriptionFromQuotationAction(
         startDate: validation.data.startDate,
         overrideCycle: validation.data.overrideCycle,
         notes: validation.data.notes,
+        allowExpiredQuotation: validation.data.allowExpiredQuotation,
       }
     );
 
@@ -219,6 +220,13 @@ export async function createDirectSubscriptionAction(
       return apiError(ERROR_CODES.NOT_FOUND, "Customer not found.");
     }
 
+    if (customer.status === "archived") {
+      return apiError(
+        ERROR_CODES.VALIDATION_ERROR,
+        `Cannot create subscription for customer '${customer.company_name}': account status is archived.`
+      );
+    }
+
     // Verify Plan
     const { data: plan, error: planErr } = await supabase
       .from("plans")
@@ -228,6 +236,13 @@ export async function createDirectSubscriptionAction(
 
     if (planErr || !plan) {
       return apiError(ERROR_CODES.NOT_FOUND, "Plan not found.");
+    }
+
+    if (plan.is_active === false) {
+      return apiError(
+        ERROR_CODES.VALIDATION_ERROR,
+        `Cannot create subscription for plan '${plan.name}': plan is currently inactive.`
+      );
     }
 
     // Enforce Plan Seat Limits

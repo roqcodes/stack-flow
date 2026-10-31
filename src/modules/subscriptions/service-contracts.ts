@@ -101,6 +101,7 @@ export interface CreateFromQuotationOptions {
   startDate?: string;
   overrideCycle?: BillingCycle;
   notes?: string;
+  allowExpiredQuotation?: boolean;
 }
 
 /**

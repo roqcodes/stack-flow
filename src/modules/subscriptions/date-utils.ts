@@ -94,7 +94,10 @@ export function calculateDailyBillingDate(
   fromDate: Date | string,
   intervalCount: number = 1
 ): Date {
-  const count = Math.max(1, Math.floor(intervalCount));
+  const count =
+    typeof intervalCount === "number" && !Number.isNaN(intervalCount) && intervalCount >= 1
+      ? Math.floor(intervalCount)
+      : 1;
   const base = typeof fromDate === "string" ? new Date(fromDate) : new Date(fromDate.getTime());
 
   if (Number.isNaN(base.getTime())) {
@@ -114,7 +117,10 @@ export function calculateWeeklyBillingDate(
   fromDate: Date | string,
   intervalCount: number = 1
 ): Date {
-  const count = Math.max(1, Math.floor(intervalCount));
+  const count =
+    typeof intervalCount === "number" && !Number.isNaN(intervalCount) && intervalCount >= 1
+      ? Math.floor(intervalCount)
+      : 1;
   const base = typeof fromDate === "string" ? new Date(fromDate) : new Date(fromDate.getTime());
 
   if (Number.isNaN(base.getTime())) {
@@ -139,7 +145,10 @@ export function calculateMonthlyBillingDate(
   intervalCount: number = 1,
   options?: NextBillingDateOptions
 ): Date {
-  const count = Math.max(1, Math.floor(intervalCount));
+  const count =
+    typeof intervalCount === "number" && !Number.isNaN(intervalCount) && intervalCount >= 1
+      ? Math.floor(intervalCount)
+      : 1;
   const base = typeof fromDate === "string" ? new Date(fromDate) : new Date(fromDate.getTime());
 
   if (Number.isNaN(base.getTime())) {
@@ -195,7 +204,10 @@ export function calculateYearlyBillingDate(
   intervalCount: number = 1,
   options?: NextBillingDateOptions
 ): Date {
-  const count = Math.max(1, Math.floor(intervalCount));
+  const count =
+    typeof intervalCount === "number" && !Number.isNaN(intervalCount) && intervalCount >= 1
+      ? Math.floor(intervalCount)
+      : 1;
   const base = typeof fromDate === "string" ? new Date(fromDate) : new Date(fromDate.getTime());
 
   if (Number.isNaN(base.getTime())) {
@@ -428,7 +440,7 @@ export function checkSubscriptionExpiry(
   // Check 3: Cancelled subscription past period end
   if (subscription.status === "cancelled" && subscription.current_period_end) {
     const periodEnd = new Date(subscription.current_period_end);
-    if (periodEnd.getTime() <= now) {
+    if (!Number.isNaN(periodEnd.getTime()) && periodEnd.getTime() <= now) {
       return {
         isExpired: true,
         isTrialExpired: trialExpired,
@@ -438,7 +450,21 @@ export function checkSubscriptionExpiry(
     }
   }
 
-  // Check 4: Status flag
+  // Check 4: Scheduled cancellation that reached period end
+  const cancelAtPeriodEnd = subscription.metadata?.cancel_at_period_end === true;
+  if (cancelAtPeriodEnd && subscription.current_period_end) {
+    const periodEnd = new Date(subscription.current_period_end);
+    if (!Number.isNaN(periodEnd.getTime()) && periodEnd.getTime() <= now) {
+      return {
+        isExpired: true,
+        isTrialExpired: trialExpired,
+        reason: `Subscription scheduled for cancellation reached period end on ${periodEnd.toISOString()}`,
+        expiryDate: periodEnd,
+      };
+    }
+  }
+
+  // Check 5: Status flag
   if (subscription.status === "expired") {
     return {
       isExpired: true,

@@ -13,17 +13,26 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { SubscriptionWithDetails, SubscriptionPlan, PlanChangeRequest } from "@/modules/subscriptions/types";
+import {
+  SubscriptionWithDetails,
+  SubscriptionPlan,
+  PlanChangeRequest,
+  PlanPermissions,
+  Subscription,
+  PreservedSubscriptionPeriod,
+} from "../types";
+import type { SubscriptionItem } from "@/modules/subscriptions/types";
 import { SubscriptionStatusBadge } from "@/modules/subscriptions/components/subscription-status-badge";
 import {
-  pauseSubscriptionAction,
-  resumeSubscriptionAction,
-  submitCancellationRequestAction,
-  revokeCancellationRequestAction,
-} from "@/modules/subscriptions/actions";
-import { revokePortalPlanChangeAction } from "../actions";
+  submitPortalPauseAction,
+  submitPortalResumeAction,
+  submitPortalCancellationAction,
+  revokePortalCancellationAction,
+  revokePortalPlanChangeAction,
+} from "../actions";
 import { PlanChangeModal } from "./plan-change-modal";
 import {
   Layers,
@@ -32,11 +41,18 @@ import {
   AlertCircle,
   Undo2,
   Sparkles,
+  CalendarDays,
+  ShieldCheck,
+  CheckCircle2,
+  Info,
 } from "lucide-react";
 
 interface PortalSubscriptionCardProps {
   subscription: SubscriptionWithDetails | null;
   availablePlans?: SubscriptionPlan[];
+  planPermissions?: PlanPermissions | null;
+  allSubscriptions?: Subscription[];
+  onSelectSubscription?: (subId: string) => void;
 }
 
 const CANCELLATION_REASONS = [
@@ -51,6 +67,9 @@ const CANCELLATION_REASONS = [
 export function PortalSubscriptionCard({
   subscription,
   availablePlans = [],
+  planPermissions,
+  allSubscriptions = [],
+  onSelectSubscription,
 }: PortalSubscriptionCardProps) {
   const router = useRouter();
   const { success, error: toastError } = useToast();
@@ -68,6 +87,11 @@ export function PortalSubscriptionCard({
   const [resumeTiming, setResumeTiming] = React.useState<"immediate" | "restore_unspent">("immediate");
   const [scheduledResumeDate, setScheduledResumeDate] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
+
+  // Permission evaluation
+  const allowPause = planPermissions?.allowPause ?? true;
+  const maxPauseDays = planPermissions?.maxPauseDays ?? null;
+  const allowImmediateCancellation = planPermissions?.allowImmediateCancellation ?? true;
 
   if (!subscription) {
     return (
@@ -88,8 +112,18 @@ export function PortalSubscriptionCard({
   const meta = (subscription.metadata as Record<string, unknown> | undefined) || {};
   const isScheduledForCancel = meta.cancel_at_period_end === true;
   const scheduledPlanChange = meta.scheduled_plan_change as PlanChangeRequest | undefined;
+  const periodHistory = (meta.period_history as PreservedSubscriptionPeriod[]) || [];
   const isTerminal =
     subscription.status === "cancelled" || subscription.status === "expired";
+
+  // Calculate max date for pause auto-resume if bounded
+  const todayIso = new Date().toISOString().split("T")[0];
+  let maxResumeDate: string | undefined;
+  if (maxPauseDays && maxPauseDays > 0) {
+    const maxDate = new Date();
+    maxDate.setUTCDate(maxDate.getUTCDate() + maxPauseDays);
+    maxResumeDate = maxDate.toISOString().split("T")[0];
+  }
 
   // Next billing countdown calculation
   const now = new Date();
@@ -122,7 +156,7 @@ export function PortalSubscriptionCard({
   const handleRevokeCancellation = async () => {
     setSubmitting(true);
     try {
-      const res = await revokeCancellationRequestAction({
+      const res = await revokePortalCancellationAction({
         subscriptionId: subscription.id,
         notes: "Cancellation revoked by customer in self-service portal",
       });
@@ -145,21 +179,28 @@ export function PortalSubscriptionCard({
     setSubmitting(true);
     try {
       if (dialogState.type === "pause") {
-        const res = await pauseSubscriptionAction({
+        if (!allowPause) {
+          toastError("Pausing is not permitted for your plan policy.");
+          return;
+        }
+
+        const res = await submitPortalPauseAction({
           subscriptionId: subscription.id,
           reason: feedback || "Customer self-service pause",
           resumeScheduledAt: scheduledResumeDate || undefined,
         });
+
         if (!res.success) {
           toastError(res.error.message);
           return;
         }
         success("Subscription has been paused.");
       } else if (dialogState.type === "resume") {
-        const res = await resumeSubscriptionAction({
+        const res = await submitPortalResumeAction({
           subscriptionId: subscription.id,
           resumeBillingNow: resumeTiming === "immediate",
         });
+
         if (!res.success) {
           toastError(res.error.message);
           return;
@@ -171,7 +212,7 @@ export function PortalSubscriptionCard({
         );
       } else if (dialogState.type === "cancel") {
         const fullReason = reason === "Other reason" && feedback ? feedback : reason;
-        const res = await submitCancellationRequestAction({
+        const res = await submitPortalCancellationAction({
           subscriptionId: subscription.id,
           immediately: cancelTiming === "immediate",
           reason: fullReason,
@@ -186,7 +227,11 @@ export function PortalSubscriptionCard({
         if (cancelTiming === "immediate") {
           success("Subscription has been terminated immediately.");
         } else {
-          success(`Subscription will remain active until ${formatDate(subscription.current_period_end)} without further renewal charges.`);
+          success(
+            `Subscription will remain active until ${formatDate(
+              subscription.current_period_end
+            )} without further renewal charges.`
+          );
         }
       }
 
@@ -204,7 +249,27 @@ export function PortalSubscriptionCard({
 
   return (
     <>
+      {/* Multi-Subscription Switcher (if customer has multiple subscriptions) */}
+      {allSubscriptions.length > 1 && onSelectSubscription && (
+        <div className="flex items-center gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs">
+          <Layers className="h-4 w-4 text-blue-600 shrink-0" />
+          <span className="font-semibold text-slate-700">Switch Subscription:</span>
+          <select
+            value={subscription.id}
+            onChange={(e) => onSelectSubscription(e.target.value)}
+            className="bg-white border border-slate-300 rounded-md px-2 py-1 text-xs font-mono font-medium text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            {allSubscriptions.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.subscription_number} — {s.billing_cycle} ({formatCurrency(s.total_amount, s.currency)})
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <Card className="border-slate-200 shadow-2xs overflow-hidden">
+        {/* Banner Header */}
         <div className="bg-gradient-to-r from-blue-600 to-indigo-700 px-6 py-5 text-white">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
@@ -217,7 +282,7 @@ export function PortalSubscriptionCard({
                 />
               </div>
               <h2 className="text-2xl font-bold tracking-tight mt-1 text-white">
-                {subscription.plan?.name || "Enterprise Tier"}
+                {subscription.plan?.name || "Enterprise Plan"}
               </h2>
               <p className="text-xs text-blue-100 font-mono mt-0.5">
                 Ref: {subscription.subscription_number}
@@ -236,32 +301,44 @@ export function PortalSubscriptionCard({
 
         <CardContent className="p-6 space-y-6">
           {/* Scheduled Plan Change Banner */}
-          {scheduledPlanChange && (scheduledPlanChange.status === "scheduled" || scheduledPlanChange.status === "pending_approval") && (
-            <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-indigo-900 shadow-2xs">
-              <div className="flex items-start gap-2.5">
-                <Sparkles className="h-5 w-5 text-indigo-600 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-semibold text-indigo-950 block">
-                    Plan Change Scheduled ({scheduledPlanChange.status === "pending_approval" ? "Pending Review" : `Effective ${formatDate(scheduledPlanChange.effective_date)}`})
-                  </span>
-                  <p className="text-indigo-800 text-[11px] mt-0.5">
-                    Switching to tier <span className="font-semibold">{scheduledPlanChange.target_plan_name || "New Plan"}</span> with {scheduledPlanChange.target_quantity} licenses ({scheduledPlanChange.target_billing_cycle || subscription.billing_cycle}).
-                    {scheduledPlanChange.notes ? ` Note: "${scheduledPlanChange.notes}"` : ""}
-                  </p>
+          {scheduledPlanChange &&
+            (scheduledPlanChange.status === "scheduled" ||
+              scheduledPlanChange.status === "pending_approval") && (
+              <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-indigo-900 shadow-2xs">
+                <div className="flex items-start gap-2.5">
+                  <Sparkles className="h-5 w-5 text-indigo-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold text-indigo-950 block">
+                      Plan Change Scheduled (
+                      {scheduledPlanChange.status === "pending_approval"
+                        ? "Pending Review"
+                        : `Effective ${formatDate(scheduledPlanChange.effective_date)}`}
+                      )
+                    </span>
+                    <p className="text-indigo-800 text-[11px] mt-0.5">
+                      Switching to tier{" "}
+                      <span className="font-semibold">
+                        {scheduledPlanChange.target_plan_name || "New Plan"}
+                      </span>{" "}
+                      with {scheduledPlanChange.target_quantity} licenses (
+                      {scheduledPlanChange.target_billing_cycle || subscription.billing_cycle}
+                      ).
+                      {scheduledPlanChange.notes ? ` Note: "${scheduledPlanChange.notes}"` : ""}
+                    </p>
+                  </div>
                 </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRevokePlanChange}
+                  disabled={submitting}
+                  className="border-indigo-300 text-indigo-900 hover:bg-indigo-100 shrink-0 text-xs font-semibold"
+                >
+                  <Undo2 className="h-3.5 w-3.5 mr-1" />
+                  Revoke Plan Change
+                </Button>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleRevokePlanChange}
-                disabled={submitting}
-                className="border-indigo-300 text-indigo-900 hover:bg-indigo-100 shrink-0 text-xs font-semibold"
-              >
-                <Undo2 className="h-3.5 w-3.5 mr-1" />
-                Revoke Plan Change
-              </Button>
-            </div>
-          )}
+            )}
 
           {/* Scheduled Cancellation Warning Banner */}
           {isScheduledForCancel && !isTerminal && (
@@ -270,7 +347,8 @@ export function PortalSubscriptionCard({
                 <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
                 <div>
                   <span className="font-semibold text-amber-950 block">
-                    Cancellation Scheduled for End of Period ({formatDate(subscription.current_period_end)})
+                    Cancellation Scheduled for End of Period (
+                    {formatDate(subscription.current_period_end)})
                   </span>
                   <p className="text-amber-800 text-[11px] mt-0.5">
                     Your services remain completely active until your billing cycle ends. No further renewal charges will be issued. You can reverse this anytime before this date.
@@ -321,8 +399,16 @@ export function PortalSubscriptionCard({
                   </span>
                 )}
               </div>
-              <span className={`font-semibold mt-1 block ${isScheduledForCancel ? "text-amber-600" : "text-blue-600"}`}>
-                {formatDate(isScheduledForCancel ? subscription.current_period_end : subscription.next_billing_date)}
+              <span
+                className={`font-semibold mt-1 block ${
+                  isScheduledForCancel ? "text-amber-600" : "text-blue-600"
+                }`}
+              >
+                {formatDate(
+                  isScheduledForCancel
+                    ? subscription.current_period_end
+                    : subscription.next_billing_date
+                )}
               </span>
             </div>
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
@@ -333,6 +419,37 @@ export function PortalSubscriptionCard({
             </div>
           </div>
 
+          {/* Plan Permission Policies Indicator */}
+          {planPermissions && (
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex flex-wrap items-center gap-3 text-[11px] text-slate-600">
+              <span className="font-semibold text-slate-700 flex items-center gap-1">
+                <ShieldCheck className="h-3.5 w-3.5 text-blue-600" />
+                Plan Policies:
+              </span>
+              <span>
+                Pause:{" "}
+                <strong className={allowPause ? "text-emerald-700" : "text-slate-500"}>
+                  {allowPause ? (maxPauseDays ? `Allowed (Max ${maxPauseDays}d)` : "Allowed") : "Disabled"}
+                </strong>
+              </span>
+              <span>•</span>
+              <span>
+                Immediate Cancellation:{" "}
+                <strong className={allowImmediateCancellation ? "text-emerald-700" : "text-slate-500"}>
+                  {allowImmediateCancellation ? "Allowed" : "Disabled (Period-end only)"}
+                </strong>
+              </span>
+              {planPermissions.seatLimit !== null && (
+                <>
+                  <span>•</span>
+                  <span>
+                    Seat Cap: <strong>{planPermissions.seatLimit} seats max</strong>
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Line items if any add-ons */}
           {subscription.items.length > 0 && (
             <div className="space-y-2">
@@ -340,7 +457,7 @@ export function PortalSubscriptionCard({
                 Included Services & Add-ons
               </h4>
               <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 text-xs">
-                {subscription.items.map((item) => (
+                {subscription.items.map((item: SubscriptionItem) => (
                   <div key={item.id} className="p-3 flex items-center justify-between">
                     <div>
                       <span className="font-medium text-slate-900 block">{item.description}</span>
@@ -349,6 +466,46 @@ export function PortalSubscriptionCard({
                     <span className="font-semibold text-slate-900">
                       {formatCurrency(item.subtotal, subscription.currency)}
                     </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Completed Billing Cycles History */}
+          {periodHistory.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5">
+                <CalendarDays className="h-3.5 w-3.5 text-slate-500" />
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Completed Billing Cycles ({periodHistory.length})
+                </h4>
+              </div>
+              <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 text-xs max-h-48 overflow-y-auto">
+                {periodHistory.map((period) => (
+                  <div
+                    key={period.period_index}
+                    className="p-3 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                  >
+                    <div>
+                      <span className="font-medium text-slate-900 block">
+                        Cycle #{period.period_index} ({formatDate(period.period_start)} — {formatDate(period.period_end)})
+                      </span>
+                      {period.invoice_id && (
+                        <span className="text-slate-400 text-[11px] font-mono">
+                          Invoice Ref: {period.invoice_id}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <span className="font-semibold text-slate-900 block">
+                        {formatCurrency(period.total_amount, period.currency)}
+                      </span>
+                      <span className="text-[10px] text-emerald-600 font-medium flex items-center justify-end gap-1">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Completed
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -366,11 +523,11 @@ export function PortalSubscriptionCard({
         </CardContent>
 
         {!isTerminal && (
-          <CardFooter className="bg-slate-50 border-t border-slate-100 px-6 py-3 flex items-center justify-between">
+          <CardFooter className="bg-slate-50 border-t border-slate-100 px-6 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <span className="text-xs text-slate-500">
-              Need changes to your tier or billing cycle?
+              Need changes to your tier, seats, or billing status?
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {subscription.status === "active" && !isScheduledForCancel && (
                 <>
                   <Button
@@ -383,19 +540,32 @@ export function PortalSubscriptionCard({
                     Change Plan / Seats
                   </Button>
 
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setFeedback("");
-                      setScheduledResumeDate("");
-                      setDialogState({ type: "pause", open: true });
-                    }}
-                    className="text-xs"
-                  >
-                    <PauseCircle className="h-3.5 w-3.5 mr-1" />
-                    Pause
-                  </Button>
+                  {allowPause ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setFeedback("");
+                        setScheduledResumeDate("");
+                        setDialogState({ type: "pause", open: true });
+                      }}
+                      className="text-xs"
+                    >
+                      <PauseCircle className="h-3.5 w-3.5 mr-1" />
+                      Pause
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled
+                      title="Pausing is not permitted for your plan policy"
+                      className="text-xs opacity-50 cursor-not-allowed"
+                    >
+                      <PauseCircle className="h-3.5 w-3.5 mr-1" />
+                      Pause (Disabled)
+                    </Button>
+                  )}
                 </>
               )}
 
@@ -437,6 +607,7 @@ export function PortalSubscriptionCard({
         onOpenChange={setPlanChangeOpen}
         subscription={subscription}
         availablePlans={availablePlans}
+        planPermissions={planPermissions}
       />
 
       {/* Confirmation & Action Dialog */}
@@ -453,23 +624,29 @@ export function PortalSubscriptionCard({
             </DialogTitle>
             <DialogDescription>
               {dialogState.type === "pause" &&
-                "Pausing your subscription puts recurring billing on hold while preserving your configurations and past invoices."}
+                "Pausing puts recurring billing on hold while preserving all your subscription history and past periods."}
               {dialogState.type === "resume" &&
                 "Choose how you want to restore recurring billing cycles for your account."}
               {dialogState.type === "cancel" &&
-                "We are sorry to see you go. Please choose when your cancellation takes effect and let us know why you are leaving."}
+                "Please choose your cancellation timing and tell us why you are leaving."}
             </DialogDescription>
           </DialogHeader>
 
           {/* PAUSE DIALOG BODY */}
           {dialogState.type === "pause" && (
             <div className="space-y-3 py-2 text-xs">
+              {maxPauseDays && (
+                <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-md text-blue-800 text-[11px] flex items-center gap-1.5">
+                  <Info className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+                  <span>Maximum allowed pause duration is {maxPauseDays} days for your plan.</span>
+                </div>
+              )}
               <div>
                 <label className="font-semibold text-slate-700 block mb-1">
                   Reason for Pause (Optional)
                 </label>
                 <Input
-                  placeholder="e.g. Vacation, seasonal pause, budget hold..."
+                  placeholder="e.g. Project hiatus, seasonal break, budget hold..."
                   value={feedback}
                   onChange={(e) => setFeedback(e.target.value)}
                 />
@@ -480,11 +657,15 @@ export function PortalSubscriptionCard({
                 </label>
                 <Input
                   type="date"
+                  min={todayIso}
+                  max={maxResumeDate}
                   value={scheduledResumeDate}
                   onChange={(e) => setScheduledResumeDate(e.target.value)}
                 />
                 <span className="text-[11px] text-slate-500 mt-0.5 block">
-                  Subject to your plan&apos;s maximum pause duration policies.
+                  {maxPauseDays
+                    ? `Must be between today and ${maxResumeDate}.`
+                    : "Subscription will automatically reactivate on this date."}
                 </span>
               </div>
             </div>
@@ -554,9 +735,9 @@ export function PortalSubscriptionCard({
                     <div>
                       <span className="font-semibold text-slate-900 flex items-center gap-1.5">
                         Cancel at end of current period
-                        <span className="text-[10px] bg-blue-100 text-blue-700 font-medium px-1.5 py-0.2 rounded">
+                        <Badge variant="secondary" className="text-[10px] bg-blue-100 text-blue-700 font-medium px-1.5 py-0">
                           Recommended
-                        </span>
+                        </Badge>
                       </span>
                       <span className="text-slate-500 text-[11px] block mt-0.5">
                         Retain access through {formatDate(subscription.current_period_end)}. No further charges will occur.
@@ -564,12 +745,19 @@ export function PortalSubscriptionCard({
                     </div>
                   </label>
 
-                  <label className="flex items-start gap-2.5 p-2.5 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50">
+                  <label
+                    className={`flex items-start gap-2.5 p-2.5 border border-slate-200 rounded-lg ${
+                      allowImmediateCancellation
+                        ? "cursor-pointer hover:bg-slate-50"
+                        : "opacity-60 cursor-not-allowed bg-slate-50"
+                    }`}
+                  >
                     <input
                       type="radio"
                       name="cancelTiming"
+                      disabled={!allowImmediateCancellation}
                       checked={cancelTiming === "immediate"}
-                      onChange={() => setCancelTiming("immediate")}
+                      onChange={() => allowImmediateCancellation && setCancelTiming("immediate")}
                       className="mt-0.5 text-rose-600"
                     />
                     <div>
@@ -577,7 +765,9 @@ export function PortalSubscriptionCard({
                         Cancel immediately (Early closure)
                       </span>
                       <span className="text-slate-500 text-[11px] block mt-0.5">
-                        Terminates recurring services immediately today.
+                        {allowImmediateCancellation
+                          ? "Terminates recurring services immediately today."
+                          : "Immediate closure is not permitted on your plan policy. Please choose cancel at period end."}
                       </span>
                     </div>
                   </label>
@@ -636,4 +826,3 @@ export function PortalSubscriptionCard({
     </>
   );
 }
-

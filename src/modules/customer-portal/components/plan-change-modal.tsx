@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { SubscriptionWithDetails, SubscriptionPlan } from "@/modules/subscriptions/types";
+import { SubscriptionWithDetails, SubscriptionPlan, PlanPermissions } from "@/modules/subscriptions/types";
 import { submitPortalPlanChangeAction } from "../actions";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -29,6 +29,7 @@ interface PlanChangeModalProps {
   onOpenChange: (open: boolean) => void;
   subscription: SubscriptionWithDetails;
   availablePlans: SubscriptionPlan[];
+  planPermissions?: PlanPermissions | null;
 }
 
 export function PlanChangeModal({
@@ -36,6 +37,7 @@ export function PlanChangeModal({
   onOpenChange,
   subscription,
   availablePlans,
+  planPermissions,
 }: PlanChangeModalProps) {
   if (!open) return null;
 
@@ -46,6 +48,7 @@ export function PlanChangeModal({
       onOpenChange={onOpenChange}
       subscription={subscription}
       availablePlans={availablePlans}
+      planPermissions={planPermissions}
     />
   );
 }
@@ -55,6 +58,7 @@ function PlanChangeModalInner({
   onOpenChange,
   subscription,
   availablePlans,
+  planPermissions,
 }: PlanChangeModalProps) {
   const router = useRouter();
   const { success, error: toastError } = useToast();
@@ -193,6 +197,11 @@ function PlanChangeModalInner({
                 <span className="text-[11px] text-slate-500 block">
                   Assign user seats to team members.
                 </span>
+                {planPermissions?.seatLimit && (
+                  <span className="text-[10px] text-amber-700 font-medium block mt-0.5">
+                    Plan policy limit: {planPermissions.seatLimit} seats maximum.
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <Button
@@ -208,8 +217,15 @@ function PlanChangeModalInner({
                 <Input
                   type="number"
                   min={1}
+                  max={planPermissions?.seatLimit || undefined}
                   value={quantity}
-                  onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  onChange={(e) => {
+                    const parsed = parseInt(e.target.value, 10) || 1;
+                    const clamped = planPermissions?.seatLimit
+                      ? Math.min(planPermissions.seatLimit, Math.max(1, parsed))
+                      : Math.max(1, parsed);
+                    setQuantity(clamped);
+                  }}
                   className="h-7 w-16 text-center text-xs font-semibold"
                   disabled={submitting}
                 />
@@ -218,8 +234,14 @@ function PlanChangeModalInner({
                   variant="outline"
                   size="sm"
                   className="h-7 w-7 p-0 text-xs font-bold"
-                  onClick={() => setQuantity((q) => q + 1)}
-                  disabled={submitting}
+                  onClick={() => {
+                    if (planPermissions?.seatLimit && quantity >= planPermissions.seatLimit) return;
+                    setQuantity((q) => q + 1);
+                  }}
+                  disabled={
+                    submitting ||
+                    Boolean(planPermissions?.seatLimit && quantity >= planPermissions.seatLimit)
+                  }
                 >
                   +
                 </Button>

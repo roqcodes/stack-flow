@@ -26,40 +26,42 @@ function CustomerPortalContent() {
   const [loading, setLoading] = React.useState(true);
   const [portalData, setPortalData] = React.useState<CustomerPortalData | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+  const [selectedSubId, setSelectedSubId] = React.useState<string | undefined>(undefined);
 
   React.useEffect(() => {
-    let isMounted = true;
-
-    async function loadPortal() {
-      setLoading(true);
-      try {
-        const res = await getCustomerPortalDataAction();
-        if (isMounted) {
-          if (res.success) {
-            setPortalData(res.data);
-          } else {
-            setErrorMessage(res.error.message);
-            toastError(res.error.message);
-          }
-          setLoading(false);
+    let ignore = false;
+    getCustomerPortalDataAction(
+      selectedSubId ? { selectedSubscriptionId: selectedSubId } : undefined
+    )
+      .then((res) => {
+        if (ignore) return;
+        if (res.success) {
+          setPortalData(res.data);
+        } else {
+          setErrorMessage(res.error.message);
+          toastError(res.error.message);
         }
-      } catch {
-        if (isMounted) {
-          const msg = "Failed to load customer portal profile.";
-          setErrorMessage(msg);
-          toastError(msg);
-          setLoading(false);
-        }
-      }
-    }
+        setLoading(false);
+      })
+      .catch(() => {
+        if (ignore) return;
+        const msg = "Failed to load customer portal profile.";
+        setErrorMessage(msg);
+        toastError(msg);
+        setLoading(false);
+      });
 
-    loadPortal();
     return () => {
-      isMounted = false;
+      ignore = true;
     };
-  }, [toastError]);
+  }, [selectedSubId, toastError]);
 
-  if (loading) {
+  const handleSelectSubscription = React.useCallback((subId: string) => {
+    setLoading(true);
+    setSelectedSubId(subId);
+  }, []);
+
+  if (loading && !portalData) {
     return <PortalSkeleton />;
   }
 
@@ -78,7 +80,12 @@ function CustomerPortalContent() {
     );
   }
 
-  return <PortalOverview data={portalData} />;
+  return (
+    <PortalOverview
+      data={portalData}
+      onSelectSubscription={handleSelectSubscription}
+    />
+  );
 }
 
 export default function CustomerPortalPage() {
