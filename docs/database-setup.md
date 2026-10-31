@@ -25,7 +25,11 @@ The migrations are located under `supabase/migrations/`:
    - Creates security helper functions: `current_user_role()`, `is_admin()`, `is_staff()`, `get_customer_id_for_auth_user()`.
    - Enables Row Level Security (RLS) across all 22 tables.
    - Configures granular role-based policies for Customer, Staff, and Admin roles.
-3. `supabase/seed.sql`
+3. `supabase/migrations/20261031000002_auth_trigger_and_bootstrap.sql`
+   - Configures automated `handle_new_user()` trigger on `auth.users` creating profiles with role strictly locked to `'customer'`.
+   - Configures secure `bootstrap_initial_admin(p_email)` function.
+   - Configures `assign_staff_role(p_email)` procedure restricted to administrators.
+4. `supabase/seed.sql`
    - Populates initial baseline tax jurisdictions, products, variants, subscription plans, plan rules, discounts, and a verified customer lifecycle sample with subscription, invoice, and payment allocation.
 
 ---

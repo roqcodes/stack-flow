@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { navigationConfig, NavItem } from "@/config/navigation";
+import { useAuthContext } from "@/components/auth/can";
 import { cn } from "@/lib/utils";
 import { Zap, X } from "lucide-react";
 
@@ -14,6 +15,7 @@ interface SidebarProps {
 
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
+  const { role, user } = useAuthContext();
 
   const sections: { key: NavItem["section"]; label: string }[] = [
     { key: "core", label: "Core Operations" },
@@ -66,7 +68,14 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         {/* Navigation list */}
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
           {sections.map(({ key, label }) => {
-            const items = navigationConfig.filter((item) => item.section === key);
+            // Filter by section AND user's active role
+            const items = navigationConfig.filter((item) => {
+              if (item.section !== key) return false;
+              if (!item.roles) return true;
+              if (!role) return false;
+              return item.roles.includes(role);
+            });
+
             if (items.length === 0) return null;
 
             return (
@@ -76,7 +85,10 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 </p>
                 <div className="space-y-0.5 pt-1">
                   {items.map((item) => {
-                    const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+                    const isActive =
+                      item.href === "/"
+                        ? pathname === "/"
+                        : pathname === item.href || pathname.startsWith(item.href + "/");
                     const Icon = item.icon;
 
                     return (
@@ -126,12 +138,16 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           <div className="flex items-center justify-between rounded-lg bg-slate-50 p-2.5">
             <div className="flex items-center gap-2">
               <span className="flex h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-emerald-100" />
-              <div className="flex flex-col">
-                <span className="text-[11px] font-semibold text-slate-700">Production Engine</span>
-                <span className="text-[10px] text-slate-400">PostgreSQL 16 · Supabase</span>
+              <div className="flex flex-col truncate">
+                <span className="text-[11px] font-semibold text-slate-700 truncate">
+                  {user?.full_name || "Enterprise Session"}
+                </span>
+                <span className="text-[10px] text-slate-400 uppercase font-mono">
+                  {role ? `${role} role` : "connecting..."}
+                </span>
               </div>
             </div>
-            <span className="rounded bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 border border-slate-200">
+            <span className="rounded bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 border border-slate-200 shrink-0">
               v1.0
             </span>
           </div>
