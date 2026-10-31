@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { UserProfile, UserRole } from "./types";
+import { Permission, hasPermission } from "./permissions";
 import { redirect } from "next/navigation";
 import { User } from "@supabase/supabase-js";
 
@@ -90,49 +91,13 @@ export async function requireRole(allowedRoles: UserRole[]): Promise<{
   return { user, profile };
 }
 
-/**
- * Permission definitions for fine-grained authorization
- */
-export type AppPermission =
-  | "system:admin"
-  | "staff:manage"
-  | "catalog:manage"
-  | "catalog:view"
-  | "customers:manage"
-  | "subscriptions:manage"
-  | "invoices:manage"
-  | "payments:manage"
-  | "audit:view"
-  | "portal:access";
-
-const ROLE_PERMISSIONS: Record<UserRole, AppPermission[]> = {
-  admin: [
-    "system:admin",
-    "staff:manage",
-    "catalog:manage",
-    "catalog:view",
-    "customers:manage",
-    "subscriptions:manage",
-    "invoices:manage",
-    "payments:manage",
-    "audit:view",
-    "portal:access",
-  ],
-  staff: [
-    "catalog:view",
-    "customers:manage",
-    "subscriptions:manage",
-    "invoices:manage",
-    "payments:manage",
-    "portal:access",
-  ],
-  customer: ["portal:access"],
-};
+/** @deprecated Use `Permission` from `./permissions` */
+export type AppPermission = Permission;
 
 /**
  * Asserts that the current user has a specific domain permission.
  */
-export async function requirePermission(permission: AppPermission): Promise<{
+export async function requirePermission(permission: Permission): Promise<{
   user: User;
   profile: UserProfile;
 }> {
@@ -143,8 +108,7 @@ export async function requirePermission(permission: AppPermission): Promise<{
     redirect("/unauthorized");
   }
 
-  const permissions = ROLE_PERMISSIONS[profile.role] || [];
-  if (!permissions.includes(permission)) {
+  if (!hasPermission(profile.role, permission)) {
     redirect("/unauthorized");
   }
 

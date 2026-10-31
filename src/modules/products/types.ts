@@ -50,3 +50,30 @@ export interface PlanRule {
   description?: string | null;
   created_at: string;
 }
+
+/** Member 3 & 4 pricing contract — sales/cost live in product/variant metadata keys. */
+export interface EffectiveProductPrice {
+  product_id: string;
+  product_code: string;
+  product_name: string;
+  sales_price: number | null;
+  cost_price: number | null;
+  currency: string;
+  variants: Array<{
+    variant_id: string;
+    sku: string;
+    name: string;
+    sales_price: number | null;
+    cost_price: number | null;
+  }>;
+  plans: Array<{
+    plan_id: string;
+    code: string;
+    name: string;
+    price: number;
+    currency: string;
+    billing_cycle: BillingCycle;
+    billing_interval_count: number;
+    is_active: boolean;
+  }>;
+}
