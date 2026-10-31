@@ -1,3 +1,5 @@
+import { Customer } from "@/modules/customers/types";
+
 export type InvoiceStatus =
   | "draft"
   | "issued"
@@ -42,4 +44,38 @@ export interface InvoiceItem {
   tax_amount: number;
   total_amount: number;
   created_at: string;
+}
+
+export interface InvoiceWithDetails extends Invoice {
+  customer?: Customer | null;
+  items: InvoiceItem[];
+  payment_allocations?: {
+    id: string;
+    allocated_amount: number;
+    created_at: string;
+    payments?: {
+      id: string;
+      payment_number: string;
+      payment_method_type: string;
+      paid_at: string;
+    } | null;
+  }[];
+}
+
+export interface InvoiceFilters {
+  search?: string;
+  status?: InvoiceStatus;
+  customerId?: string;
+  subscriptionId?: string;
+  startDate?: string;
+  endDate?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface GenerateInvoiceFromSubscriptionParams {
+  subscriptionId: string;
+  asOfDate?: Date | string;
+  dueDate?: string;
+  notes?: string;
 }
