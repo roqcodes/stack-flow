@@ -44,7 +44,7 @@ export function Header({ onMenuToggle }: HeaderProps) {
   }, [role]);
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white/95 px-4 sm:px-6 backdrop-blur-xs">
+    <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-white/70 bg-white/72 px-4 sm:px-6 backdrop-blur-xl shadow-[0_1px_0_rgba(15,23,42,0.04)]">
       {/* Left side: Mobile menu toggle, Breadcrumbs & Search */}
       <div className="flex items-center gap-4 flex-1 min-w-0">
         <button

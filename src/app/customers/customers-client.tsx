@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search, Users, Building2, Mail, Phone } from "lucide-react";
+import { Plus, Search, Users, Building2, Mail, Phone, UserCheck, UserX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +45,8 @@ import {
 } from "@/modules/customers/actions";
 import { Customer, CustomerStatus } from "@/modules/customers/types";
 import { formatDate, getStatusBadgeVariant } from "@/lib/utils";
+import { PageHeader } from "@/components/layout/page-header";
+import { KpiStatCard } from "@/components/ui/kpi-stat-card";
 
 interface CustomersClientProps {
   initialData: PaginatedResult<Customer>;
@@ -221,20 +223,18 @@ export function CustomersClient({ initialData }: CustomersClientProps) {
 
   const totalPages = Math.ceil(data.total / data.limit);
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-            <Users className="h-6 w-6 text-blue-600" />
-            Customers
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Manage your customer directory, company details and account links.
-          </p>
-        </div>
+  const activeOnPage = data.items.filter((c) => c.status === "active").length;
+  const activePct = data.items.length
+    ? Math.round((activeOnPage / data.items.length) * 100)
+    : 0;
 
+  return (
+    <div className="space-y-8">
+      <PageHeader
+        title="Customers"
+        description="Manage your customer directory, company details, and account links."
+        icon={Users}
+        actions={
         <Dialog
           open={createOpen}
           onOpenChange={(o) => { setCreateOpen(o); if (!o) resetForm(); }}
@@ -256,6 +256,35 @@ export function CustomersClient({ initialData }: CustomersClientProps) {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        }
+      />
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <KpiStatCard
+          title="Organizations"
+          value={data.total}
+          subtitle="Total in directory"
+          icon={Building2}
+          accent="blue"
+          delay={0}
+        />
+        <KpiStatCard
+          title="Active (this page)"
+          value={activeOnPage}
+          subtitle={`${data.items.length} shown · page ${data.page}`}
+          icon={UserCheck}
+          accent="emerald"
+          trend={{ value: activePct, label: "active rate", direction: activePct >= 70 ? "up" : "neutral" }}
+          delay={0.05}
+        />
+        <KpiStatCard
+          title="Suspended / archived"
+          value={data.items.filter((c) => c.status !== "active").length}
+          subtitle="On current results view"
+          icon={UserX}
+          accent="slate"
+          delay={0.1}
+        />
       </div>
 
       {/* Filters */}

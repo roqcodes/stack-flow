@@ -1,5 +1,6 @@
 import { Metadata } from "next";
 import { requirePermission } from "@/modules/auth/auth-utils";
+import { ensureRequestScope } from "@/lib/request-scope";
 import { listQuotationsAction } from "@/modules/quotations/actions";
 import { listCustomersAction } from "@/modules/customers/actions";
 import { listQuotationTemplatesAction } from "@/modules/quotations/actions";
@@ -13,6 +14,7 @@ export const metadata: Metadata = {
 };
 
 export default async function QuotationsPage() {
+  await ensureRequestScope();
   await requirePermission("quotations:view");
 
   const [quotationsResult, customersResult, templatesResult] = await Promise.all([

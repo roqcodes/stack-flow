@@ -2,6 +2,13 @@ import { z } from "zod";
 
 // ── Product ──────────────────────────────────────────────────────────────────
 
+const productMetadataSchema = z.object({
+  product_type: z.string().max(100).optional(),
+  sales_price: z.coerce.number().min(0).optional(),
+  cost_price: z.coerce.number().min(0).optional(),
+  currency: z.string().length(3).optional(),
+});
+
 export const createProductSchema = z.object({
   name: z.string().min(1, "Name is required").max(255),
   code: z
@@ -12,7 +19,7 @@ export const createProductSchema = z.object({
   description: z.string().max(2000).optional().nullable(),
   status: z.enum(["active", "draft", "archived"]).default("active"),
   is_active: z.boolean().default(true),
-  metadata: z.record(z.string(), z.unknown()).optional().default({}),
+  metadata: productMetadataSchema.optional().default({}),
 });
 
 export const updateProductSchema = createProductSchema.partial();

@@ -51,8 +51,8 @@ export async function getCurrentProfile(): Promise<UserProfile | null> {
         is_active: true,
         permissions: [],
         avatar_url: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
       };
     }
 

@@ -1,6 +1,7 @@
 import { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { requirePermission } from "@/modules/auth/auth-utils";
+import { ensureRequestScope } from "@/lib/request-scope";
 import { getCustomerAction } from "@/modules/customers/actions";
 import { CustomerDetailClient } from "./customer-detail-client";
 
@@ -21,6 +22,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export default async function CustomerDetailPage({ params }: PageProps) {
+  await ensureRequestScope();
   await requirePermission("customers:view");
   const { customerId } = await params;
   const result = await getCustomerAction(customerId);

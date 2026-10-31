@@ -30,6 +30,8 @@ import {
   QuotationTemplateWithItems,
 } from "@/modules/quotations/actions";
 import { Product } from "@/modules/products/types";
+import { getProductPlansAction } from "@/modules/products/actions";
+import { Plan } from "@/modules/products/types";
 
 interface TemplatesClientProps {
   initialTemplates: QuotationTemplateWithItems[];
@@ -48,7 +50,20 @@ export function TemplatesClient({ initialTemplates, products }: TemplatesClientP
 
   const [itemTemplateId, setItemTemplateId] = React.useState("");
   const [productId, setProductId] = React.useState("");
+  const [planId, setPlanId] = React.useState("");
+  const [plans, setPlans] = React.useState<Plan[]>([]);
   const [quantity, setQuantity] = React.useState(1);
+
+  React.useEffect(() => {
+    if (!productId) {
+      setPlans([]);
+      setPlanId("");
+      return;
+    }
+    void getProductPlansAction(productId).then((result) => {
+      if (result.success) setPlans(result.data);
+    });
+  }, [productId]);
 
   const handleCreateTemplate = async () => {
     setLoading(true);
@@ -77,6 +92,7 @@ export function TemplatesClient({ initialTemplates, products }: TemplatesClientP
     const result = await addTemplateItemAction({
       template_id: itemTemplateId,
       product_id: productId,
+      plan_id: planId || null,
       quantity,
       default_discount_percentage: 0,
     });
@@ -166,6 +182,20 @@ export function TemplatesClient({ initialTemplates, products }: TemplatesClientP
             <option value="">Select product…</option>
             {products.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </Select>
+          <Select
+            id="plan-pick"
+            label="Plan (optional)"
+            value={planId}
+            onChange={(e) => setPlanId(e.target.value)}
+            className="flex-1"
+          >
+            <option value="">Product-only line</option>
+            {plans.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} — {p.billing_cycle} (${p.price})
+              </option>
             ))}
           </Select>
           <Input

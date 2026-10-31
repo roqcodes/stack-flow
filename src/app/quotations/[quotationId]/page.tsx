@@ -1,6 +1,7 @@
 import { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { requirePermission } from "@/modules/auth/auth-utils";
+import { ensureRequestScope } from "@/lib/request-scope";
 import { getQuotationAction } from "@/modules/quotations/actions";
 import { QuotationDetailClient } from "./quotation-detail-client";
 
@@ -11,6 +12,7 @@ interface PageProps {
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  await ensureRequestScope();
   const { quotationId } = await params;
   const result = await getQuotationAction(quotationId);
   const number = result.success ? result.data.quotation_number : "Quotation";
@@ -21,6 +23,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export default async function QuotationDetailPage({ params }: PageProps) {
+  await ensureRequestScope();
   await requirePermission("quotations:view");
   const { quotationId } = await params;
   const result = await getQuotationAction(quotationId);

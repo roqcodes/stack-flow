@@ -39,6 +39,22 @@
     --radius-lg: 0.5rem;
     --radius-xl: 0.75rem;
     --radius-2xl: 1rem;
+
+    --glass-bg: rgba(255, 255, 255, 0.72);
+    --glass-border: rgba(255, 255, 255, 0.85);
+    --mesh-1: #e0e7ff;
+    --mesh-2: #f0f9ff;
+    --mesh-3: #ecfdf5;
+  }
+}
+
+@layer utilities {
+  .app-mesh-bg {
+    background-color: var(--background);
+    background-image:
+      radial-gradient(ellipse 80% 50% at 20% -10%, var(--mesh-1), transparent 55%),
+      radial-gradient(ellipse 60% 45% at 100% 0%, var(--mesh-2), transparent 50%),
+      radial-gradient(ellipse 50% 40% at 50% 100%, var(--mesh-3), transparent 45%);
   }
 }
 

@@ -32,3 +32,28 @@ export interface DiscountUsage {
   redeemed_amount: number;
   redeemed_at: string;
 }
+
+export interface DiscountWithProducts extends Discount {
+  applicable_products?: { id: string; name: string; code: string }[];
+}
+
+export interface DiscountValidationParams {
+  discount: Discount;
+  subtotal: number;
+  productIds?: string[];
+  applicableProductIds?: string[];
+  asOfDate?: Date | string;
+}
+
+export interface DiscountValidationResult {
+  isValid: boolean;
+  discountAmount: number;
+  error?: string;
+  code?: string;
+}
+
+export interface DiscountFilters {
+  search?: string;
+  type?: DiscountType;
+  isActive?: boolean;
+}

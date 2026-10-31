@@ -32,6 +32,10 @@ import {
 } from "./types";
 import { PaginatedResult } from "@/modules/products/actions";
 import { buildQuotationPdf } from "./generate-pdf";
+import {
+  resolveAuthoritativeQuotationLines,
+  resolveTemplateQuotationLines,
+} from "./quotation-pricing";
 
 export type {
   QuotationWithItems,
@@ -108,6 +112,15 @@ function generateQuotationNumber(sequence: number): string {
   const year = new Date().getFullYear();
   const paddedSeq = String(sequence).padStart(6, "0");
   return `QT-${year}-${paddedSeq}`;
+}
+
+async function markExpiredQuotations(supabase: Awaited<ReturnType<typeof createClient>>) {
+  const today = new Date().toISOString().slice(0, 10);
+  await supabase
+    .from("quotations")
+    .update({ status: "expired" })
+    .eq("status", "sent")
+    .lt("valid_until", today);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -324,6 +337,62 @@ export async function removeTemplateItemAction(
   }
 }
 
+/**
+ * Preview quotation lines with server-authoritative catalog pricing and taxes.
+ */
+export async function previewQuotationLinesAction(input: {
+  customer_id: string;
+  template_id?: string | null;
+  line_items?: CreateQuotationInput["line_items"];
+}): Promise<
+  ApiResponse<{
+    lines: CreateQuotationInput["line_items"];
+    terms?: string | null;
+    valid_until?: string;
+  }>
+> {
+  try {
+    await requirePermission("quotations:manage");
+
+    const supabase = await createClient();
+    const { customer_id, template_id, line_items = [] } = input;
+
+    if (template_id) {
+      const fromTemplate = await resolveTemplateQuotationLines(
+        supabase,
+        template_id,
+        customer_id
+      );
+      if (!fromTemplate.ok) {
+        return apiError(ERROR_CODES.VALIDATION_ERROR, fromTemplate.message);
+      }
+      return apiSuccess({
+        lines: fromTemplate.lines,
+        terms: fromTemplate.terms,
+        valid_until: fromTemplate.defaultValidUntil,
+      });
+    }
+
+    if (line_items.length === 0) {
+      return apiError(ERROR_CODES.VALIDATION_ERROR, "Add at least one line item");
+    }
+
+    const authoritative = await resolveAuthoritativeQuotationLines(
+      supabase,
+      customer_id,
+      line_items
+    );
+    if (!authoritative.ok) {
+      return apiError(ERROR_CODES.VALIDATION_ERROR, authoritative.message);
+    }
+
+    return apiSuccess({ lines: authoritative.lines });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Internal server failure";
+    return apiError(ERROR_CODES.INTERNAL_SERVER_ERROR, message);
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // QUOTATIONS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -337,7 +406,10 @@ export async function listQuotationsAction(
   try {
     await requireRole(["admin", "staff"]);
 
-    const parsed = quotationFilterSchema.safeParse(filters);
+    const supabase = await createClient();
+    await markExpiredQuotations(supabase);
+
+    const parsed = quotationFilterSchema.safeParse(filters ?? {});
     if (!parsed.success) {
       return apiError(
         ERROR_CODES.VALIDATION_ERROR,
@@ -349,7 +421,6 @@ export async function listQuotationsAction(
     const { search, status, customer_id, page, limit } = parsed.data;
     const offset = (page - 1) * limit;
 
-    const supabase = await createClient();
     let query = supabase
       .from("quotations")
       .select(
@@ -400,6 +471,7 @@ export async function getQuotationAction(
     await requireRole(["admin", "staff"]);
 
     const supabase = await createClient();
+    await markExpiredQuotations(supabase);
 
     const [quotationRes, itemsRes] = await Promise.all([
       supabase
@@ -461,10 +533,51 @@ export async function createQuotationAction(
     const { customer_id, template_id, currency, valid_until, notes, terms, line_items } =
       validation.data;
 
-    // Server-side total computation
-    const totals = computeQuotationTotals(line_items);
-
     const supabase = await createClient();
+
+    let resolvedLines = line_items;
+    let resolvedTerms = terms ?? null;
+    let resolvedValidUntil = valid_until;
+
+    if (template_id) {
+      const fromTemplate = await resolveTemplateQuotationLines(
+        supabase,
+        template_id,
+        customer_id
+      );
+      if (!fromTemplate.ok) {
+        return apiError(ERROR_CODES.VALIDATION_ERROR, fromTemplate.message);
+      }
+      resolvedLines = fromTemplate.lines;
+      if (!resolvedTerms && fromTemplate.terms) {
+        resolvedTerms = fromTemplate.terms;
+      }
+      if (!resolvedValidUntil) {
+        resolvedValidUntil = fromTemplate.defaultValidUntil;
+      }
+    } else if (template_id === null && line_items.length === 0) {
+      return apiError(ERROR_CODES.VALIDATION_ERROR, "At least one line item is required");
+    }
+
+    const { data: templateMeta } = template_id
+      ? await supabase.from("quotation_templates").select("terms").eq("id", template_id).single()
+      : { data: null };
+
+    if (!resolvedTerms && templateMeta?.terms) {
+      resolvedTerms = templateMeta.terms;
+    }
+
+    const authoritative = await resolveAuthoritativeQuotationLines(
+      supabase,
+      customer_id,
+      resolvedLines
+    );
+    if (!authoritative.ok) {
+      return apiError(ERROR_CODES.VALIDATION_ERROR, authoritative.message);
+    }
+
+    const pricedLines = authoritative.lines;
+    const totals = computeQuotationTotals(pricedLines);
 
     // Generate unique quotation number using count-based sequence
     const { count: totalQuotations } = await supabase
@@ -481,9 +594,9 @@ export async function createQuotationAction(
         customer_id,
         template_id: template_id ?? null,
         currency,
-        valid_until,
+        valid_until: resolvedValidUntil,
         notes: notes ?? null,
-        terms: terms ?? null,
+        terms: resolvedTerms,
         status: "draft",
         ...totals,
       })
@@ -495,7 +608,7 @@ export async function createQuotationAction(
     }
 
     // Insert line items with server-computed tax/total per line
-    const itemsToInsert = line_items.map((item) => {
+    const itemsToInsert = pricedLines.map((item) => {
       const computed = computeItemTotal(
         item.quantity,
         item.unit_price,
@@ -560,7 +673,7 @@ export async function updateQuotationAction(
     // Guard: only draft quotations may be modified
     const { data: existing, error: fetchError } = await supabase
       .from("quotations")
-      .select("id, status")
+      .select("id, status, customer_id")
       .eq("id", quotationId)
       .single();
 
@@ -579,7 +692,17 @@ export async function updateQuotationAction(
 
     // If line items provided — delete old and reinsert with recomputed totals
     if (line_items && line_items.length > 0) {
-      const totals = computeQuotationTotals(line_items);
+      const authoritative = await resolveAuthoritativeQuotationLines(
+        supabase,
+        existing.customer_id,
+        line_items
+      );
+      if (!authoritative.ok) {
+        return apiError(ERROR_CODES.VALIDATION_ERROR, authoritative.message);
+      }
+
+      const pricedLines = authoritative.lines;
+      const totals = computeQuotationTotals(pricedLines);
 
       const { error: deleteError } = await supabase
         .from("quotation_items")
@@ -590,7 +713,7 @@ export async function updateQuotationAction(
         return apiError(ERROR_CODES.DATABASE_ERROR, deleteError.message);
       }
 
-      const itemsToInsert = line_items.map((item) => {
+      const itemsToInsert = pricedLines.map((item) => {
         const computed = computeItemTotal(
           item.quantity,
           item.unit_price,

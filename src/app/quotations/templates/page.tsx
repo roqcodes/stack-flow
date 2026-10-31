@@ -1,6 +1,7 @@
 import { Metadata } from "next";
 import Link from "next/link";
 import { requirePermission } from "@/modules/auth/auth-utils";
+import { ensureRequestScope } from "@/lib/request-scope";
 import {
   listQuotationTemplatesAction,
   getQuotationTemplateAction,
@@ -16,6 +17,7 @@ export const metadata: Metadata = {
 };
 
 export default async function QuotationTemplatesPage() {
+  await ensureRequestScope();
   await requirePermission("quotations:view");
 
   const [templatesResult, productsResult] = await Promise.all([

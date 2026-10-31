@@ -11,6 +11,8 @@ import {
   XCircle,
   Send,
   Eye,
+  CheckCircle2,
+  Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,12 +52,15 @@ import {
   sendQuotationAction,
   acceptQuotationAction,
   rejectQuotationAction,
+  previewQuotationLinesAction,
   QuotationWithItems,
 } from "@/modules/quotations/actions";
 import { PaginatedResult } from "@/modules/products/actions";
 import { QuotationStatus, QuotationTemplate } from "@/modules/quotations/types";
 import { Customer } from "@/modules/customers/types";
 import { formatDate, formatCurrency, getStatusBadgeVariant } from "@/lib/utils";
+import { PageHeader } from "@/components/layout/page-header";
+import { KpiStatCard } from "@/components/ui/kpi-stat-card";
 
 interface QuotationsClientProps {
   initialQuotations: PaginatedResult<QuotationWithItems>;
@@ -73,6 +78,8 @@ const STATUS_OPTIONS = [
 ];
 
 interface LineItem {
+  product_id?: string;
+  plan_id?: string;
   description: string;
   quantity: number;
   unit_price: number;
@@ -115,6 +122,86 @@ export function QuotationsClient({
     terms: "",
   });
   const [lineItems, setLineItems] = React.useState<LineItem[]>([defaultLineItem()]);
+  const [pricingLoading, setPricingLoading] = React.useState(false);
+
+  const applyTemplatePreview = React.useCallback(
+    async (customerId: string, templateId: string) => {
+      setPricingLoading(true);
+      const result = await previewQuotationLinesAction({
+        customer_id: customerId,
+        template_id: templateId,
+      });
+      setPricingLoading(false);
+      if (!result.success) {
+        toastError(result.error.message);
+        return;
+      }
+      setLineItems(
+        result.data.lines.map((line) => ({
+          product_id: line.product_id ?? undefined,
+          plan_id: line.plan_id ?? undefined,
+          description: line.description,
+          quantity: line.quantity,
+          unit_price: line.unit_price,
+          discount_amount: line.discount_amount,
+          tax_rate: line.tax_rate,
+        }))
+      );
+      if (result.data.terms) {
+        setForm((f) => ({ ...f, terms: result.data.terms ?? f.terms }));
+      }
+      if (result.data.valid_until) {
+        setForm((f) => ({ ...f, valid_until: result.data.valid_until ?? f.valid_until }));
+      }
+    },
+    [toastError]
+  );
+
+  const recalculateManualLines = async () => {
+    if (!form.customer_id) {
+      toastError("Select a customer first.");
+      return;
+    }
+    if (form.template_id) {
+      await applyTemplatePreview(form.customer_id, form.template_id);
+      return;
+    }
+    setPricingLoading(true);
+    const result = await previewQuotationLinesAction({
+      customer_id: form.customer_id,
+      line_items: lineItems.map((item) => ({
+        product_id: item.product_id || null,
+        plan_id: item.plan_id || null,
+        description: item.description,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        discount_amount: item.discount_amount,
+        tax_rate: item.tax_rate,
+      })),
+    });
+    setPricingLoading(false);
+    if (!result.success) {
+      toastError(result.error.message);
+      return;
+    }
+    setLineItems(
+      result.data.lines.map((line) => ({
+        product_id: line.product_id ?? undefined,
+        plan_id: line.plan_id ?? undefined,
+        description: line.description,
+        quantity: line.quantity,
+        unit_price: line.unit_price,
+        discount_amount: line.discount_amount,
+        tax_rate: line.tax_rate,
+      }))
+    );
+  };
+
+  React.useEffect(() => {
+    if (form.customer_id && form.template_id) {
+      void applyTemplatePreview(form.customer_id, form.template_id);
+    }
+  }, [form.customer_id, form.template_id, applyTemplatePreview]);
 
   const fetchQuotations = React.useCallback(
     async (searchVal: string, statusVal: string, pageVal: number) => {
@@ -174,10 +261,18 @@ export function QuotationsClient({
       customer_id: form.customer_id,
       template_id: form.template_id || undefined,
       currency: form.currency,
-      valid_until: form.valid_until,
+      valid_until: form.valid_until || new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
       notes: form.notes || undefined,
       terms: form.terms || undefined,
-      line_items: lineItems,
+      line_items: lineItems.map((item) => ({
+        product_id: item.product_id || null,
+        plan_id: item.plan_id || null,
+        description: item.description,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        discount_amount: item.discount_amount,
+        tax_rate: item.tax_rate,
+      })),
     });
 
     setSubmitting(false);
@@ -219,20 +314,17 @@ export function QuotationsClient({
 
   const totalPages = Math.ceil(data.total / data.limit);
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-            <FileSpreadsheet className="h-6 w-6 text-blue-600" />
-            Quotations
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Create and manage customer quotations with line items, taxes, and discounts.
-          </p>
-        </div>
+  const acceptedCount = data.items.filter((q) => q.status === "accepted").length;
+  const openCount = data.items.filter((q) => q.status === "draft" || q.status === "sent").length;
+  const winRate = data.items.length ? Math.round((acceptedCount / data.items.length) * 100) : 0;
 
+  return (
+    <div className="space-y-8">
+      <PageHeader
+        title="Quotations"
+        description="Create and manage customer quotations with line items, taxes, and discounts."
+        icon={FileSpreadsheet}
+        actions={
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={() => router.push("/quotations/templates")}>
             Templates
@@ -284,16 +376,26 @@ export function QuotationsClient({
 
               {/* Line Items */}
               <div className="border-t border-slate-100 pt-4">
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Line Items</p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    leftIcon={<Plus className="h-3 w-3" />}
-                    onClick={() => setLineItems((prev) => [...prev, defaultLineItem()])}
-                  >
-                    Add Line
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      isLoading={pricingLoading}
+                      onClick={() => void recalculateManualLines()}
+                    >
+                      Recalculate prices & tax
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      leftIcon={<Plus className="h-3 w-3" />}
+                      onClick={() => setLineItems((prev) => [...prev, defaultLineItem()])}
+                    >
+                      Add Line
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="space-y-3">
@@ -412,6 +514,34 @@ export function QuotationsClient({
           </DialogContent>
         </Dialog>
         </div>
+        }
+      />
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <KpiStatCard
+          title="Pipeline (page)"
+          value={openCount}
+          subtitle={`${data.total} quotes total`}
+          icon={Send}
+          accent="blue"
+        />
+        <KpiStatCard
+          title="Accepted"
+          value={acceptedCount}
+          subtitle="On current results"
+          icon={CheckCircle2}
+          accent="emerald"
+          trend={{ value: winRate, label: "win rate", direction: winRate >= 25 ? "up" : "neutral" }}
+          delay={0.05}
+        />
+        <KpiStatCard
+          title="In progress"
+          value={data.items.filter((q) => q.status === "sent").length}
+          subtitle="Awaiting customer response"
+          icon={Clock}
+          accent="amber"
+          delay={0.1}
+        />
       </div>
 
       {/* Filters */}

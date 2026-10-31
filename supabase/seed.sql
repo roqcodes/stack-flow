@@ -40,10 +40,10 @@ VALUES
 -- -----------------------------------------------------------------------------
 -- 2. PRODUCTS & VARIANTS
 -- -----------------------------------------------------------------------------
-INSERT INTO products (id, name, code, description, status, is_active)
+INSERT INTO products (id, name, code, description, status, is_active, metadata)
 VALUES
-  ('b0000000-0000-0000-0000-000000000001', 'Brightloop Cloud Platform', 'PROD-CLOUD', 'Autonomous subscription billing and lifecycle platform engine', 'active', true),
-  ('b0000000-0000-0000-0000-000000000002', 'Dedicated Billing Infrastructure', 'PROD-INFRA', 'Single-tenant isolated database cluster and dedicated throughput worker', 'active', true);
+  ('b0000000-0000-0000-0000-000000000001', 'Brightloop Cloud Platform', 'PROD-CLOUD', 'Autonomous subscription billing and lifecycle platform engine', 'active', true, '{"product_type":"saas","sales_price":49.00,"cost_price":12.00,"currency":"USD"}'::jsonb),
+  ('b0000000-0000-0000-0000-000000000002', 'Dedicated Billing Infrastructure', 'PROD-INFRA', 'Single-tenant isolated database cluster and dedicated throughput worker', 'active', true, '{"product_type":"infrastructure","sales_price":1999.00,"cost_price":800.00,"currency":"USD"}'::jsonb);
 
 INSERT INTO product_variants (id, product_id, name, sku, attributes, is_active)
 VALUES

@@ -37,7 +37,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       {/* Sidebar container */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-slate-200 bg-white transition-transform duration-200 ease-in-out lg:static lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-white/70 bg-white/72 backdrop-blur-xl shadow-[4px_0_24px_rgba(15,23,42,0.04)] transition-transform duration-200 ease-in-out lg:static lg:translate-x-0",
           isOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
@@ -97,10 +97,10 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                         href={item.href}
                         onClick={onClose}
                         className={cn(
-                          "group flex items-center justify-between rounded-lg px-3 py-2 text-xs font-medium transition-colors",
+                          "group flex items-center justify-between rounded-lg border border-transparent px-3 py-2 text-xs font-medium transition-colors",
                           isActive
-                            ? "bg-blue-50 text-blue-700 font-semibold"
-                            : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                            ? "border-blue-100/80 bg-blue-500/10 text-blue-800 font-semibold shadow-sm"
+                            : "text-slate-600 hover:bg-white/60 hover:text-slate-900"
                         )}
                       >
                         <div className="flex items-center gap-2.5">

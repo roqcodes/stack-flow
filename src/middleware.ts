@@ -40,6 +40,8 @@ export async function middleware(request: NextRequest) {
 
   // Protected paths that require active authentication
   const protectedRoutes = [
+    "/",
+    "/portal",
     "/dashboard",
     "/customers",
     "/subscriptions",
