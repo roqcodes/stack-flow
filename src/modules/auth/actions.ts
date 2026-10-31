@@ -60,11 +60,11 @@ export async function registerAction(data: RegisterInput): Promise<AuthActionRes
     return { error: error.message };
   }
 
-  // Check if email confirmation is required by Supabase
+  // Check if session was returned or if user can proceed directly to login
   if (authData.user && !authData.session) {
     return {
       success: true,
-      message: "Registration successful! Please check your email to verify your account before logging in.",
+      message: "Registration successful! Your account is active. You can now proceed to sign in.",
     };
   }
 
