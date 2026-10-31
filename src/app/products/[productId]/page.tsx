@@ -12,6 +12,7 @@ interface Props {
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  await ensureRequestScope();
   const { productId } = await params;
   const result = await getProductAction(productId);
   const name = result.success ? result.data.product.name : "Product";

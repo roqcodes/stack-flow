@@ -12,6 +12,7 @@ interface PageProps {
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  await ensureRequestScope();
   const { customerId } = await params;
   const result = await getCustomerAction(customerId);
   const name = result.success ? result.data.company_name : "Customer";
