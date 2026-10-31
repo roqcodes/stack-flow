@@ -54,3 +54,29 @@ export interface QuotationTemplateItem {
   default_discount_percentage: number;
   created_at: string;
 }
+
+export interface QuotationCustomerSnapshot {
+  id: string;
+  company_name: string;
+  contact_name: string;
+  email: string;
+  currency: string;
+  billing_address_line1?: string | null;
+  billing_address_line2?: string | null;
+  billing_city?: string | null;
+  billing_state?: string | null;
+  billing_postal_code?: string | null;
+  billing_country?: string | null;
+}
+
+export interface QuotationWithItems extends Quotation {
+  items: QuotationItem[];
+  customer?: QuotationCustomerSnapshot;
+}
+
+export interface QuotationTemplateWithItems extends QuotationTemplate {
+  items: (QuotationTemplateItem & {
+    product?: { id: string; name: string; code: string } | null;
+    plan?: { id: string; name: string; billing_cycle: string; price: number } | null;
+  })[];
+}
