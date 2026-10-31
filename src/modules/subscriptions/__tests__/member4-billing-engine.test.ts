@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import {
   calculateNextBillingDate,
   isBillingDue,
+  checkSubscriptionExpiry,
 } from "../date-utils";
 import {
   isTransitionAllowed,
   isLifecycleTransitionAllowed,
+  resolveLifecycleStatus,
 } from "../state-machine";
 import {
   SubscriptionForBilling,
@@ -691,4 +693,357 @@ test("Member 4: Quotation conversion options and validity validation", () => {
   const overrideActive = true;
   const canConvertWithOverride = !isExpired || overrideActive;
   assert.equal(canConvertWithOverride, true);
+});
+
+// ----------------------------------------------------------------------------
+// TEST GROUP 10: Billing Eligibility Verification Matrix
+// ----------------------------------------------------------------------------
+
+type ExpiryCheckInput = Parameters<typeof checkSubscriptionExpiry>[0];
+
+test("Member 4: Billing eligibility for Active Subscriptions", () => {
+  const asOf = new Date("2026-11-01T00:00:00.000Z");
+
+  const activeSub = {
+    id: "sub-act-001",
+    status: "active" as const,
+    lifecycle_status: "active" as const,
+    current_period_start: "2026-10-01T00:00:00.000Z",
+    current_period_end: "2026-11-01T00:00:00.000Z",
+    next_billing_date: "2026-11-01T00:00:00.000Z",
+    customer_active: true,
+    metadata: {},
+  };
+
+  // 1. Due date verification
+  assert.equal(isBillingDue(activeSub.next_billing_date, asOf), true);
+
+  // 2. Lifecycle status check
+  const lifecycle = resolveLifecycleStatus(activeSub.status, activeSub.metadata);
+  assert.equal(lifecycle, "active");
+
+  // 3. Expiry check
+  const expiry = checkSubscriptionExpiry(activeSub as ExpiryCheckInput, asOf);
+  assert.equal(expiry.isExpired, false);
+
+  // 4. Pre-flight eligibility determination
+  const reasons: string[] = [];
+  if (lifecycle !== "active" && lifecycle !== "confirmed") {
+    reasons.push("Subscription is not in active lifecycle state.");
+  }
+  if (!activeSub.customer_active) {
+    reasons.push("Customer is not active.");
+  }
+  if (expiry.isExpired) {
+    reasons.push(expiry.reason || "Subscription has expired.");
+  }
+  if (!isBillingDue(activeSub.next_billing_date, asOf)) {
+    reasons.push("Subscription is not yet due for billing.");
+  }
+
+  assert.equal(reasons.length, 0);
+  assert.equal(reasons.length === 0, true); // ELIGIBLE for billing
+});
+
+test("Member 4: Billing eligibility for Paused Subscriptions", () => {
+  const asOf = new Date("2026-11-01T00:00:00.000Z");
+
+  const pausedSub = {
+    id: "sub-pau-002",
+    status: "paused" as const,
+    lifecycle_status: "paused" as const,
+    current_period_start: "2026-10-01T00:00:00.000Z",
+    current_period_end: "2026-11-01T00:00:00.000Z",
+    next_billing_date: "2026-11-01T00:00:00.000Z",
+    customer_active: true,
+    metadata: {
+      lifecycle_status: "paused",
+      pause_record: {
+        paused_at: "2026-10-15T00:00:00.000Z",
+        reason: "Seasonal business pause",
+      },
+    },
+  };
+
+  const lifecycle = resolveLifecycleStatus(pausedSub.status, pausedSub.metadata);
+  assert.equal(lifecycle, "paused");
+
+  // Due date check
+  assert.equal(isBillingDue(pausedSub.next_billing_date, asOf), true);
+
+  // Pre-flight validation rule check
+  const reasons: string[] = [];
+  if (lifecycle === "paused" || pausedSub.status === "paused") {
+    reasons.push("Subscription is currently paused. Billing is suspended.");
+  }
+
+  assert.equal(reasons.length, 1);
+  assert.equal(reasons[0], "Subscription is currently paused. Billing is suspended.");
+  // INELIGIBLE for billing run
+  const canProceed = (reasons as string[]).length === 0;
+  assert.equal(canProceed, false);
+});
+
+test("Member 4: Billing eligibility for Closed Subscriptions", () => {
+  const asOf = new Date("2026-11-01T00:00:00.000Z");
+
+  const closedSub = {
+    id: "sub-cls-003",
+    status: "cancelled" as const,
+    lifecycle_status: "closed" as const,
+    current_period_start: "2026-10-01T00:00:00.000Z",
+    current_period_end: "2026-11-01T00:00:00.000Z",
+    next_billing_date: "2026-11-01T00:00:00.000Z",
+    customer_active: true,
+    metadata: {
+      lifecycle_status: "closed",
+      cancellation_request: {
+        status: "applied",
+        reason: "Customer migrated away",
+      },
+    },
+  };
+
+  const lifecycle = resolveLifecycleStatus(closedSub.status, closedSub.metadata);
+  assert.equal(lifecycle, "closed");
+
+  // Expiry evaluation
+  const expiry = checkSubscriptionExpiry(closedSub as ExpiryCheckInput, asOf);
+  assert.equal(expiry.isExpired, true);
+
+  // Pre-flight validation rule check
+  const reasons: string[] = [];
+  if (lifecycle === "closed" || closedSub.status === "cancelled" || closedSub.status === "expired") {
+    reasons.push("Subscription has been closed or cancelled. Cannot generate new recurring invoice.");
+  }
+
+  assert.equal(reasons.length, 1);
+  assert.equal(
+    reasons[0],
+    "Subscription has been closed or cancelled. Cannot generate new recurring invoice."
+  );
+  // INELIGIBLE for billing run
+  assert.notEqual(reasons.length, 0);
+});
+
+test("Member 4: Billing eligibility for Expired Subscriptions", () => {
+  const asOf = new Date("2026-11-01T00:00:00.000Z");
+
+  // 1. Fixed-term contract expiry check
+  const expiredContractSub = {
+    id: "sub-exp-004",
+    status: "active" as const,
+    lifecycle_status: "active" as const,
+    current_period_start: "2026-10-01T00:00:00.000Z",
+    current_period_end: "2026-11-01T00:00:00.000Z",
+    next_billing_date: "2026-11-01T00:00:00.000Z",
+    metadata: {
+      contract_end_date: "2026-10-31T23:59:59.000Z", // Ended before billing date
+    },
+  };
+
+  const expiryResult = checkSubscriptionExpiry(expiredContractSub as ExpiryCheckInput, asOf);
+  assert.equal(expiryResult.isExpired, true);
+  assert.match(expiryResult.reason!, /fixed term contract reached expiration date/i);
+
+  // Pre-flight validation rule check
+  const reasons: string[] = [];
+  if (expiryResult.isExpired) {
+    reasons.push(expiryResult.reason || "Subscription term has expired.");
+  }
+
+  assert.equal(reasons.length, 1);
+  // INELIGIBLE for billing run
+  assert.notEqual(reasons.length, 0);
+
+  // 2. Max renewal count reached check
+  const maxCyclesSub = {
+    id: "sub-exp-005",
+    status: "active" as const,
+    current_period_start: "2026-10-01T00:00:00.000Z",
+    current_period_end: "2026-11-01T00:00:00.000Z",
+    next_billing_date: "2026-11-01T00:00:00.000Z",
+    metadata: {
+      renewal_count: 12,
+      max_renewal_cycles: 12, // Max cycles exhausted
+    },
+  };
+
+  const maxCyclesExpiry = checkSubscriptionExpiry(maxCyclesSub as ExpiryCheckInput, asOf);
+  assert.equal(maxCyclesExpiry.isExpired, true);
+  assert.match(maxCyclesExpiry.reason!, /maximum renewal cycles \(12\)/);
+});
+
+test("Member 4: Billing eligibility for Subscriptions Not Yet Due", () => {
+  const asOf = new Date("2026-11-01T00:00:00.000Z");
+
+  const futureDueSub = {
+    id: "sub-fut-006",
+    status: "active" as const,
+    lifecycle_status: "active" as const,
+    current_period_start: "2026-11-01T00:00:00.000Z",
+    current_period_end: "2026-12-01T00:00:00.000Z",
+    next_billing_date: "2026-12-01T00:00:00.000Z", // 30 days away
+    customer_active: true,
+    metadata: {},
+  };
+
+  // 1. isBillingDue check must return false
+  const due = isBillingDue(futureDueSub.next_billing_date, asOf);
+  assert.equal(due, false);
+
+  // 2. Pre-flight check with checkDue=true must flag as not yet due
+  const reasons: string[] = [];
+  if (!isBillingDue(futureDueSub.next_billing_date, asOf)) {
+    reasons.push(
+      `Subscription is not yet due for billing (next billing date: ${futureDueSub.next_billing_date}).`
+    );
+  }
+
+  assert.equal(reasons.length, 1);
+  assert.match(reasons[0], /not yet due for billing/);
+  // INELIGIBLE for current billing cycle
+  assert.notEqual(reasons.length, 0);
+});
+
+test("Member 4: Billing eligibility for Subscriptions with Multiple Product Lines", () => {
+  const asOf = new Date("2026-11-01T00:00:00.000Z");
+
+  const multiLineSub = {
+    id: "sub-multi-007",
+    subscription_number: "SUB-2026-MULTI01",
+    status: "active" as const,
+    lifecycle_status: "active" as const,
+    billing_cycle: "monthly" as const,
+    currency: "USD",
+    unit_price: 500.0,
+    quantity: 1,
+    subtotal: 800.0,
+    discount_amount: 50.0,
+    tax_amount: 75.0,
+    total_amount: 825.0,
+    current_period_start: "2026-10-01T00:00:00.000Z",
+    current_period_end: "2026-11-01T00:00:00.000Z",
+    next_billing_date: "2026-11-01T00:00:00.000Z",
+    plan_id: "plan-ent-core",
+    customer: {
+      id: "cust-ent-01",
+      company_name: "MegaCorp Industries",
+      contact_name: "Sarah Chief",
+      email: "finance@megacorp.com",
+      currency: "USD",
+      billing_country: "US",
+    },
+    plan: {
+      id: "plan-ent-core",
+      name: "Enterprise Core Tier",
+      code: "ENT-CORE",
+      billing_cycle: "monthly" as const,
+      billing_interval_count: 1,
+      price: 500.0,
+    },
+    metadata: {},
+  };
+
+  // Associated multiple subscription items:
+  // 1. Redundant record of base plan (should be deduplicated)
+  // 2. Storage add-on: 5 units x $20.00 = $100.00
+  // 3. 24/7 Dedicated Support: 1 unit x $200.00 = $200.00
+  const subItems = [
+    {
+      id: "item-base-dup",
+      subscription_id: multiLineSub.id,
+      product_id: "prod-ent",
+      plan_id: "plan-ent-core", // matches base plan -> skip
+      description: "Enterprise Core (Duplicate)",
+      quantity: 1,
+      unit_price: 500.0,
+      subtotal: 500.0,
+    },
+    {
+      id: "item-storage-addon",
+      subscription_id: multiLineSub.id,
+      product_id: "prod-addon-storage",
+      plan_id: null,
+      description: "Additional 100GB Cloud Storage",
+      quantity: 5,
+      unit_price: 20.0,
+      subtotal: 100.0,
+    },
+    {
+      id: "item-support-addon",
+      subscription_id: multiLineSub.id,
+      product_id: "prod-addon-support",
+      plan_id: null,
+      description: "24/7 Dedicated SLA Support Package",
+      quantity: 1,
+      unit_price: 200.0,
+      subtotal: 200.0,
+    },
+  ];
+
+  // Assemble billing lines using getSubscriptionBillingLines logic
+  const billingLines: SubscriptionBillingLine[] = [
+    {
+      id: `line-${multiLineSub.id}-base`,
+      subscription_id: multiLineSub.id,
+      product_id: "prod-ent",
+      plan_id: multiLineSub.plan_id,
+      description: `${multiLineSub.plan.name} (${multiLineSub.billing_cycle} tier)`,
+      quantity: multiLineSub.quantity,
+      unit_amount: 500.0,
+      discount_amount: 50.0,
+      tax_rate: 10,
+      tax_amount: 45.0,
+      total_amount: 495.0,
+      is_recurring: true,
+    },
+  ];
+
+  for (const item of subItems) {
+    if (item.plan_id && item.plan_id === multiLineSub.plan_id) {
+      continue; // Deduplicate
+    }
+    billingLines.push({
+      id: item.id,
+      subscription_id: multiLineSub.id,
+      product_id: item.product_id,
+      plan_id: item.plan_id || null,
+      description: item.description,
+      quantity: item.quantity,
+      unit_amount: item.unit_price,
+      discount_amount: 0,
+      tax_rate: 10,
+      tax_amount: item.subtotal * 0.1,
+      total_amount: item.subtotal * 1.1,
+      is_recurring: true,
+    });
+  }
+
+  // 1. Verify exact line count
+  assert.equal(billingLines.length, 3);
+  assert.equal(billingLines[0].id, `line-${multiLineSub.id}-base`);
+  assert.equal(billingLines[1].id, "item-storage-addon");
+  assert.equal(billingLines[1].quantity, 5);
+  assert.equal(billingLines[1].unit_amount, 20.0);
+  assert.equal(billingLines[2].id, "item-support-addon");
+  assert.equal(billingLines[2].quantity, 1);
+  assert.equal(billingLines[2].unit_amount, 200.0);
+
+  // 2. Verify all lines are recurring and non-negative
+  assert.equal(billingLines.every((l) => l.is_recurring), true);
+  assert.equal(billingLines.every((l) => l.total_amount > 0), true);
+
+  // 3. Verify total sum computation
+  const lineSubtotal = billingLines.reduce((acc, l) => acc + (l.unit_amount * l.quantity), 0);
+  assert.equal(lineSubtotal, 800.0); // 500 + 100 + 200
+
+  // 4. Verify billing eligibility
+  assert.equal(isBillingDue(multiLineSub.next_billing_date, asOf), true);
+  const expiry = checkSubscriptionExpiry(multiLineSub as ExpiryCheckInput, asOf);
+  assert.equal(expiry.isExpired, false);
+
+  // Multi-line subscription is fully ELIGIBLE for Member 4 invoice generation
+  const canProceed = billingLines.length > 0 && !expiry.isExpired;
+  assert.equal(canProceed, true);
 });

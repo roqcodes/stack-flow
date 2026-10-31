@@ -37,6 +37,7 @@ import {
 import {
   calculateNextBillingDate,
   checkSubscriptionExpiry,
+  isBillingDue,
   NextBillingDateOptions,
   SubscriptionExpiryCheckResult,
 } from "./date-utils";
@@ -523,14 +524,21 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
         return apiSuccess([]);
       }
 
-      // Filter to only eligible active subscriptions (must not be draft, quotation, paused, closed, or scheduled for cancellation at period end)
+      // Filter to only eligible active subscriptions (must not be draft, quotation, paused, closed, expired, or scheduled for cancellation at period end)
       const eligibleRecords = records.filter((r) => {
         const lifecycle = resolveLifecycleStatus(r.status, r.metadata);
         const meta = (r.metadata as Record<string, unknown>) || {};
         if (meta.cancel_at_period_end === true) {
           return false;
         }
-        return lifecycle === "active" || lifecycle === "confirmed";
+        if (lifecycle !== "active" && lifecycle !== "confirmed") {
+          return false;
+        }
+        const expiry = checkSubscriptionExpiry(r, asOf);
+        if (expiry.isExpired) {
+          return false;
+        }
+        return true;
       });
 
       if (eligibleRecords.length === 0) {
@@ -795,7 +803,8 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
    * Pre-flight checks before Member 4 generates an invoice or attempts a charge.
    */
   async validateSubscriptionForBilling(
-    subscriptionId: string
+    subscriptionId: string,
+    options?: { asOfDate?: Date | string; checkDue?: boolean }
   ): Promise<ApiResponse<SubscriptionBillingValidation>> {
     try {
       const supabase = await createClient();
@@ -821,6 +830,7 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
       }
 
       const customer = sub.customers as unknown as SubscriptionCustomer;
+      const asOf = options?.asOfDate ? new Date(options.asOfDate) : new Date();
 
       // Customer Standing Check
       if (!customer) {
@@ -852,9 +862,18 @@ export class SubscriptionService implements ISubscriptionServiceContracts {
       }
 
       // Expiry & Term Diagnostics Check
-      const expiryCheck = checkSubscriptionExpiry(sub);
+      const expiryCheck = checkSubscriptionExpiry(sub, asOf);
       if (expiryCheck.isExpired) {
         reasons.push(expiryCheck.reason || "Subscription term has expired.");
+      }
+
+      // Check if billing is due when checkDue option is provided
+      if (options?.checkDue && sub.next_billing_date) {
+        if (!isBillingDue(sub.next_billing_date, asOf)) {
+          reasons.push(
+            `Subscription is not yet due for billing (next billing date: ${sub.next_billing_date}).`
+          );
+        }
       }
 
       // Trial Period Check

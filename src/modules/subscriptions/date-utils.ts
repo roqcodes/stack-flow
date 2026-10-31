@@ -423,8 +423,9 @@ export function checkSubscriptionExpiry(
     }
   }
 
-  // Check 2: Fixed-term expiration in metadata
-  const metaExpiresAt = subscription.metadata?.expires_at as string | undefined;
+  // Check 2: Fixed-term expiration in metadata (expires_at or contract_end_date)
+  const metaExpiresAt = (subscription.metadata?.expires_at ||
+    subscription.metadata?.contract_end_date) as string | undefined;
   if (metaExpiresAt) {
     const expDate = new Date(metaExpiresAt);
     if (expDate.getTime() <= now) {
@@ -435,6 +436,23 @@ export function checkSubscriptionExpiry(
         expiryDate: expDate,
       };
     }
+  }
+
+  // Check 2b: Maximum renewal cycles reached
+  const renewalCount = Number(subscription.metadata?.renewal_count);
+  const maxRenewalCycles = Number(subscription.metadata?.max_renewal_cycles);
+  if (
+    !Number.isNaN(maxRenewalCycles) &&
+    maxRenewalCycles > 0 &&
+    !Number.isNaN(renewalCount) &&
+    renewalCount >= maxRenewalCycles
+  ) {
+    return {
+      isExpired: true,
+      isTrialExpired: trialExpired,
+      reason: `Subscription reached maximum renewal cycles (${maxRenewalCycles})`,
+      expiryDate: new Date(subscription.current_period_end),
+    };
   }
 
   // Check 3: Cancelled subscription past period end

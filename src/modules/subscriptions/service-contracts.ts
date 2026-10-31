@@ -198,7 +198,8 @@ export interface ISubscriptionServiceContracts {
   ): Promise<ApiResponse<SubscriptionBillingLine[]>>;
 
   validateSubscriptionForBilling(
-    subscriptionId: string
+    subscriptionId: string,
+    options?: { asOfDate?: Date | string; checkDue?: boolean }
   ): Promise<ApiResponse<SubscriptionBillingValidation>>;
 
   calculateNextBillingDate(
